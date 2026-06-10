@@ -9,12 +9,25 @@ import threading
 import logging
 import time
 import socket
+import queue
 from typing import Optional
 
 try:
     import pythoncom
 except ImportError:
     pythoncom = None
+
+try:
+    import win32com.client
+    HAS_WIN32COM = True
+except ImportError:
+    HAS_WIN32COM = False
+
+try:
+    import comtypes.client
+    HAS_COMTYPES = True
+except ImportError:
+    HAS_COMTYPES = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,11 +49,16 @@ class AudioEngine:
         self.server_socket = None
         self.is_running = True
 
+        # SAPI5 queue and worker thread
+        self.speech_queue = queue.Queue()
+        self.speech_thread = threading.Thread(target=self._speech_queue_processor, daemon=True)
+        self.speech_thread.start()
+
         # Always start background TCP server thread to satisfy wireless sockets
         self.server_thread = threading.Thread(target=self._run_tcp_server, daemon=True)
         self.server_thread.start()
 
-        logger.info("Transient Thread Audio Engine initialized successfully.")
+        logger.info("Transient Thread Audio Engine initialized successfully with persistent queue.")
 
     def _run_tcp_server(self):
         try:
@@ -64,10 +82,116 @@ class AudioEngine:
         except Exception as e:
             logger.error(f"TCP Audio Socket server crashed: {e}")
 
+    def _speech_queue_processor(self):
+        """
+        Runs in a dedicated background thread, initializing native SAPI.SpVoice once and consuming the speech queue.
+        This completely eliminates initialization lag and ensures robust audio playback.
+        """
+        try:
+            if pythoncom:
+                pythoncom.CoInitialize()
+        except Exception as e:
+            logger.debug(f"COM CoInitialize failed: {e}")
+
+        voice = None
+        try:
+            logger.info("Initializing persistent SAPI5 voice engine in background thread...")
+            if HAS_WIN32COM:
+                voice = win32com.client.Dispatch("SAPI.SpVoice")
+            elif HAS_COMTYPES:
+                voice = comtypes.client.CreateObject("SAPI.SpVoice")
+            
+            if voice:
+                voice.Rate = 1       # Slightly faster speech rate (default 0)
+                voice.Volume = 100   # Full hardware volume (0-100)
+                logger.info("Persistent Native SpVoice COM object created successfully.")
+            else:
+                logger.error("No COM interface available to build SAPI.SpVoice.")
+        except Exception as e:
+            logger.error(f"Failed to initialize persistent SAPI5 voice: {e}")
+
+        while self.is_running:
+            try:
+                # Poll queue every 100ms
+                text, interrupt = self.speech_queue.get(timeout=0.1)
+                
+                # Check for interrupt signal
+                if interrupt and voice:
+                    # Drain the queue of any other pending speech requests.
+                    try:
+                        voice.Speak("", 2) # 2 = SPF_PURGEBEFORESPEAK (stops current speaking instantly)
+                        while not self.speech_queue.empty():
+                            self.speech_queue.get_nowait()
+                            self.speech_queue.task_done()
+                    except Exception as stop_err:
+                        logger.debug(f"Error trying to interrupt/drain queue: {stop_err}")
+                
+                if text and voice:
+                    try:
+                        self.is_speaking = True
+                        logger.info(f"Speaking (Async): '{text}'")
+                        
+                        # Speak asynchronously (SPF_ASYNC = 1)
+                        voice.Speak(text, 1)
+                        
+                        # Wait loop that polls for complete status or incoming interrupt requests in the queue
+                        while self.is_running:
+                            try:
+                                # Wait for up to 50ms for speech to complete
+                                is_done = voice.WaitUntilDone(50)
+                            except Exception:
+                                # Fallback checks if WaitUntilDone fails on certain wrapper classes
+                                try:
+                                    # RunningState != 2 means not currently speaking
+                                    is_done = (voice.Status.RunningState != 2)
+                                except Exception:
+                                    is_done = True
+                                    
+                            if is_done:
+                                break
+                            
+                            # Peek at the queue without consuming. If the next message has `interrupt = True`,
+                            # purge current speech immediately and break to process the interrupt.
+                            if not self.speech_queue.empty():
+                                try:
+                                    next_item = self.speech_queue.queue[0]
+                                    if next_item[1]:  # if next_item has interrupt = True
+                                        logger.info("Interrupt detected in queue! Purging current speech.")
+                                        voice.Speak("", 2)  # SPF_PURGEBEFORESPEAK (stops speaking instantly)
+                                        break
+                                except Exception:
+                                    pass
+                                    
+                            time.sleep(0.01)
+                            
+                    except Exception as run_err:
+                        logger.error(f"Error during SAPI5 playback: {run_err}")
+                    finally:
+                        self.is_speaking = False
+                
+                self.speech_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as loop_err:
+                logger.error(f"Speech processor loop error: {loop_err}")
+                time.sleep(0.1)
+
+        # Cleanup COM
+        if voice:
+            try:
+                del voice
+            except Exception:
+                pass
+        try:
+            if pythoncom:
+                pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
     def speak_message(self, text: str, interrupt: bool = False):
         """
         Submits text to be spoken asynchronously.
-        If local_mode is active, speaks via pyttsx3. Also broadcasts over network.
+        If local_mode is active, queues text for pyttsx3. Also broadcasts over network.
         """
         if not text:
             return
@@ -75,17 +199,9 @@ class AudioEngine:
         # 1. Broadcast to all active wireless clients in a background thread to prevent main thread blocking
         threading.Thread(target=self._broadcast_socket_message, args=(text,), daemon=True).start()
 
-        # 2. Local speech SAPI5 execution
+        # 2. Local speech SAPI5 execution via persistent queue
         if self.local_mode:
-            with self.lock:
-                if self.is_speaking:
-                    logger.debug(f"SAPI5 Busy: Discarding speech request: '{text}'")
-                    return
-                self.is_speaking = True
-
-            # Launch transient background speech worker
-            thread = threading.Thread(target=self._speak_worker, args=(text,), daemon=True)
-            thread.start()
+            self.speech_queue.put((text, interrupt))
 
     def _broadcast_socket_message(self, text: str):
         # Prevent race condition: give background accept loop a tiny window to register the client
@@ -119,50 +235,6 @@ class AudioEngine:
                     logger.debug(f"Direct wireless socket redirect to remote host failed: {e}")
             threading.Thread(target=send_direct_worker, daemon=True).start()
 
-    def _speak_worker(self, text: str):
-        """
-        Isolated background worker context. Handles SAPI5 init, speech, and clean destruction.
-        """
-        try:
-            if pythoncom:
-                pythoncom.CoInitialize()
-        except Exception as e:
-            logger.debug(f"COM CoInitialize failed: {e}")
-
-        engine = None
-        try:
-            logger.info(f"Synthesizing Audio Text on Local PC Speakers: '{text}'")
-            engine = pyttsx3.init()
-            engine.setProperty('rate', 160)     # Fast, highly readable speech speed
-            engine.setProperty('volume', 1.0)   # Full hardware volume
-            
-            # Match English voice
-            voices = engine.getProperty('voices')
-            for voice in voices:
-                if "english" in voice.name.lower() or "en" in voice.languages[0].lower() if voice.languages else False:
-                    engine.setProperty('voice', voice.id)
-                    break
-            
-            engine.say(text)
-            engine.runAndWait()
-        except Exception as hardware_err:
-            logger.error(f"Local hardware speech playback error: {hardware_err}")
-        finally:
-            # Reclaim Windows system engine resources completely to prevent hangs
-            if engine:
-                try:
-                    del engine
-                except Exception:
-                    pass
-            try:
-                if pythoncom:
-                    pythoncom.CoUninitialize()
-            except Exception:
-                pass
-            
-            # Reset speaking flag
-            with self.lock:
-                self.is_speaking = False
 
     def stop(self):
         """

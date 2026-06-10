@@ -1,8 +1,8 @@
 """
-Module A: UI & User Interface Engine (Premium Edition)
+Module A: UI & User Interface Engine (Premium Obsidian Edition)
 Constructs a stunning, high-fidelity native Tkinter desktop interface tailored for accessibility.
-Enforces Deep Matte Charcoal (#121212) backdrop, Sleek Velvet Graphite (#1A1A24) cards,
-Vibrant Emerald Mint (#00F5D4) success indicators, and Neon Purple (#9D4EDD) hover control switches.
+Enforces Obsidian Black (#09090b) backdrop, Sleek Velvet Zinc (#18181b) cards,
+Vibrant Emerald Mint (#10b981) success indicators, and Radiant Purple (#8b5cf6) accents.
 """
 
 import tkinter as tk
@@ -15,28 +15,82 @@ from typing import Dict, Any, Callable, Optional
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("GUIApp")
 
+class GradientCanvas(tk.Canvas):
+    """
+    Custom vertical gradient canvas widget that supports shadow text for accessibility.
+    """
+    def __init__(self, parent, color1: str, color2: str, text: str = "", font: tuple = ("Segoe UI", 20, "bold"), fg: str = "#8b5cf6", **kwargs):
+        super().__init__(parent, highlightthickness=0, bd=0, **kwargs)
+        self.color1 = color1
+        self.color2 = color2
+        self.text_content = text
+        self.font = font
+        self.fg = fg
+        self.text_id = None
+        self.shadow_id = None
+        self.bind("<Configure>", self._on_configure)
+
+    def _on_configure(self, event=None):
+        self.draw_gradient()
+        self.draw_text()
+
+    def draw_gradient(self):
+        self.delete("gradient")
+        width = self.winfo_width()
+        height = self.winfo_height()
+        if width <= 1 or height <= 1:
+            return
+            
+        r1, g1, b1 = self.hex_to_rgb(self.color1)
+        r2, g2, b2 = self.hex_to_rgb(self.color2)
+        
+        for y in range(height):
+            ratio = y / max(height - 1, 1)
+            r = int(r1 + (r2 - r1) * ratio)
+            g = int(g1 + (g2 - g1) * ratio)
+            b = int(b1 + (b2 - b1) * ratio)
+            color = f"#{r:02x}{g:02x}{b:02x}"
+            self.create_line(0, y, width, y, tags="gradient", fill=color)
+        self.tag_lower("gradient")
+
+    def draw_text(self):
+        self.delete("text", "shadow")
+        width = self.winfo_width()
+        height = self.winfo_height()
+        
+        # 3D shadow offset
+        shadow_offset = 2
+        self.create_text(width // 2 + shadow_offset, height // 2 + shadow_offset, text=self.text_content, font=self.font, fill="#050507", tags="shadow")
+        self.text_id = self.create_text(width // 2, height // 2, text=self.text_content, font=self.font, fill=self.fg, tags="text")
+
+    @staticmethod
+    def hex_to_rgb(hex_str):
+        hex_str = hex_str.lstrip('#')
+        return tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4))
+
+
 class MedicineAssistantGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("👁️ AI Medicine Assistant - Premium Accessibility Suite")
-        self.root.geometry("1200x780")
+        self.root.geometry("1240x800")
         
-        # High-Fidelity Color Palette System
-        self.bg_color = "#121212"          # Matte Charcoal Backdrop
-        self.card_color = "#1A1A24"        # Sleek Dark Velvet Graphite
-        self.border_color = "#2D2D3F"      # Soft outline accent
-        self.accent_color = "#9D4EDD"      # Neon Purple
-        self.hover_color = "#7B2CBF"       # Amethyst Violet
+        # High-Fidelity Premium Obsidian Color Palette System
+        self.bg_color = "#09090b"          # Obsidian dark backdrop
+        self.card_color = "#18181b"        # Velvet Zinc card body
+        self.border_color = "#27272a"      # Sleek highlight outline
+        self.accent_color = "#8b5cf6"      # Radiant Violet/Purple
+        self.hover_color = "#a78bfa"       # Lighter lavender hover
         
         # State Colors
-        self.success_color = "#00F5D4"     # Vibrant Emerald Mint
-        self.alert_color = "#FF0054"       # Neon Crimson
-        self.warning_color = "#FFB703"     # Golden Warning
+        self.success_color = "#10b981"     # Emerald Green
+        self.alert_color = "#f43f5e"       # Vibrant Rose Red
+        self.warning_color = "#f59e0b"     # Warm Amber Orange
         
-        self.text_color = "#FFFFFF"        # Crisp pure white
-        self.muted_color = "#A5A5B2"       # Soft graphite lavender
-
-        # Legacy Compatibility Color Hooks
+        self.text_color = "#fafafa"        # Clean bright white
+        self.muted_color = "#a1a1aa"       # Cool zinc gray
+        
+        # Legacy compatibility color hooks
         self.green_btn = self.success_color
         self.red_btn = self.alert_color
         self.orange_btn = self.warning_color
@@ -50,26 +104,33 @@ class MedicineAssistantGUI:
         self.quit_callback = None
         self.ip_connect_callback = None
         self.proceed_callback = None
-        self.bind_network_callback = None
+        self.verify_camera_callback = None
         self.online_search_callback = None
+        self.scan_wifi_callback = None
+        self.camera_type_change_callback = None
 
         # Two-Stage Layout Containers
         self.diag_frame = None
         self.main_frame = None
 
-        # Network IP Address variable
+        # Configuration variables
+        self.camera_type_var = tk.StringVar(value="local") # "local" or "ip"
+        self.usb_index_var = tk.StringVar(value="0")
         self.ip_url_var = tk.StringVar(value="http://192.168.100.67:8080/video")
 
         # Hardware connection states cache
         self.hardware_states = {
             "mouse": ("CONNECTED", True),
-            "speakers": ("CONNECTED (Local Audio)", True),
-            "network": ("DISCONNECTED", False),
+            "speakers": ("CONNECTED", True),
             "camera": ("DISCONNECTED", False)
         }
 
         self._build_stages()
         self._bind_hotkeys()
+        
+        # Start status bar pulsing loop
+        self.root.after(500, self.pulse_status_bar)
+        
         logger.info("Accessibility UI Engine successfully initialized under Velvet-Purple Theme.")
 
     def _build_stages(self):
@@ -83,34 +144,131 @@ class MedicineAssistantGUI:
         # --- Stage 2: Workspace Frame (Hidden initially) ---
         self.main_frame = tk.Frame(self.root, bg=self.bg_color)
 
-    def _create_premium_button(self, parent, text, bg, fg, command, hover_bg=None, font=("Segoe UI", 12, "bold"), height=2) -> tk.Button:
+    def _create_premium_button(self, parent, text, bg, fg, command, hover_bg=None, font=("Segoe UI", 11, "bold"), height=2) -> tk.Button:
         """
-        Utility to spawn fully padded flat buttons with hover animations.
+        Utility to spawn fully padded flat buttons with hover animations and outline glow.
         """
-        btn = tk.Button(parent, text=text, font=font, bg=bg, fg=fg, relief=tk.FLAT, bd=0, padx=20, pady=10,
-                        activebackground=hover_bg or bg, activeforeground=fg, command=command, cursor="hand2")
-        if hover_bg:
-            btn.bind("<Enter>", lambda e: btn.configure(bg=hover_bg))
-            btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
+        btn = tk.Button(parent, text=text, font=font, bg=bg, fg=fg, relief=tk.FLAT, bd=0, padx=22, pady=10,
+                        activebackground=hover_bg or bg, activeforeground=fg, command=command, cursor="hand2",
+                        highlightthickness=1, highlightbackground=bg, highlightcolor=hover_bg or bg)
+        
+        btn.default_bg = bg
+        btn.hover_bg = hover_bg or bg
+        
+        def on_btn_enter(e):
+            if btn.cget("state") == tk.DISABLED:
+                return
+            btn.configure(bg=btn.hover_bg)
+            if btn.hover_bg:
+                btn.configure(highlightbackground=btn.hover_bg, highlightcolor=btn.hover_bg)
+        def on_btn_leave(e):
+            if btn.cget("state") == tk.DISABLED:
+                return
+            btn.configure(bg=btn.default_bg)
+            btn.configure(highlightbackground=btn.default_bg, highlightcolor=btn.default_bg)
+            
+        btn.bind("<Enter>", on_btn_enter)
+        btn.bind("<Leave>", on_btn_leave)
         return btn
+
+    def _bind_hover_glow(self, widget, normal_bg=None, hover_bg=None, normal_border=None, hover_border=None):
+        """
+        Binds enter/leave events to apply beautiful neon glowing highlights to container frames
+        and blends child widgets' background colors recursively for visual excellence.
+        """
+        def change_bg(w, bg_color):
+            if isinstance(w, (tk.Frame, tk.Label, tk.LabelFrame, tk.Radiobutton)):
+                try:
+                    w.configure(bg=bg_color)
+                except Exception:
+                    pass
+            for child in w.winfo_children():
+                change_bg(child, bg_color)
+
+        def on_enter(e):
+            if hover_bg:
+                change_bg(widget, hover_bg)
+            if hover_border:
+                try:
+                    widget.configure(highlightbackground=hover_border, highlightcolor=hover_border)
+                except Exception:
+                    pass
+        def on_leave(e):
+            if normal_bg:
+                change_bg(widget, normal_bg)
+            if normal_border:
+                try:
+                    widget.configure(highlightbackground=normal_border, highlightcolor=normal_border)
+                except Exception:
+                    pass
+        
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+        
+        def bind_children(w):
+            for child in w.winfo_children():
+                if not isinstance(child, (tk.Text, tk.Entry, tk.Button)):
+                    child.bind("<Enter>", on_enter)
+                    child.bind("<Leave>", on_leave)
+                    bind_children(child)
+        bind_children(widget)
+
+    def pulse_status_bar(self):
+        """
+        Pulsates the status bar color when in warning, alert or loading states.
+        """
+        try:
+            if hasattr(self, 'status_bar') and self.status_bar.winfo_exists():
+                current_text = self.status_bar.cget("text").upper()
+                current_bg = self.status_bar.cget("bg")
+                
+                is_alert = any(kw in current_text for kw in ["ALERT", "FAILED", "REQUIRED", "RESCAN", "ERROR", "WARNING", "OFFLINE"])
+                is_loading = any(kw in current_text for kw in ["ANALYZING", "EXTRACTING", "SCANNING", "QUERYING"])
+                
+                if is_alert:
+                    color1 = self.alert_color
+                    color2 = "#881337" # Dark crimson
+                    new_bg = color2 if current_bg == color1 else color1
+                    self.status_bar.configure(bg=new_bg, fg=self.text_color)
+                elif is_loading:
+                    color1 = self.warning_color
+                    color2 = "#78350f" # Dark brown/amber
+                    new_bg = color2 if current_bg == color1 else color1
+                    self.status_bar.configure(bg=new_bg, fg=self.text_color)
+                else:
+                    if "LIVE" in current_text or "ACTIVE" in current_text:
+                        color1 = self.accent_color
+                        color2 = "#4c1d95"
+                        new_bg = color2 if current_bg == color1 else color1
+                        self.status_bar.configure(bg=new_bg, fg=self.text_color)
+                    elif "SUCCESS" in current_text:
+                        color1 = self.success_color
+                        color2 = "#064e3b" # Dark emerald
+                        new_bg = color2 if current_bg == color1 else color1
+                        self.status_bar.configure(bg=new_bg, fg="#fafafa" if new_bg == color2 else "#09090b")
+        except Exception as e:
+            logger.debug(f"Pulsing exception: {e}")
+        finally:
+            self.root.after(500, self.pulse_status_bar)
 
     def _draw_status_pills(self, parent_frame):
         """
         Draws a modern horizontal ribbon of custom connectivity pills.
         """
         ribbon = tk.Frame(parent_frame, bg=self.bg_color)
-        ribbon.pack(fill=tk.X, pady=(15, 5))
+        ribbon.pack(fill=tk.X, pady=(10, 10))
 
         def create_pill(label, text, is_ok):
             glow = self.success_color if is_ok else self.alert_color
-            pill = tk.Frame(ribbon, bg=self.card_color, relief=tk.SOLID, bd=1, highlightbackground=self.border_color, highlightcolor=self.border_color)
+            pill = tk.Frame(ribbon, bg=self.card_color, highlightthickness=1, highlightbackground=self.border_color, highlightcolor=self.border_color, bd=0)
             pill.pack(side=tk.LEFT, padx=10, fill=tk.Y)
+            self._bind_hover_glow(pill, normal_border=self.border_color, hover_border=self.accent_color)
 
             # Icon/Name indicator
-            tk.Label(pill, text=label, font=("Segoe UI", 10, "bold"), fg=self.muted_color, bg=self.card_color, padx=10, pady=6).pack(side=tk.LEFT)
+            tk.Label(pill, text=label, font=("Segoe UI", 9, "bold"), fg=self.muted_color, bg=self.card_color, padx=10, pady=5).pack(side=tk.LEFT)
             
             # Glowing badge
-            badge = tk.Label(pill, text=text.upper(), font=("Segoe UI", 10, "bold"), fg="#121212", bg=glow, padx=12, pady=6)
+            badge = tk.Label(pill, text=text.upper(), font=("Segoe UI", 9, "bold"), fg="#09090b", bg=glow, padx=12, pady=5)
             badge.pack(side=tk.RIGHT)
 
         m_text, m_ok = self.hardware_states["mouse"]
@@ -119,100 +277,179 @@ class MedicineAssistantGUI:
         s_text, s_ok = self.hardware_states["speakers"]
         create_pill("🔊 AUDIO", s_text, s_ok)
 
-        n_text, n_ok = self.hardware_states["network"]
-        create_pill("🌐 NETWORK", n_text, n_ok)
-
         c_text, c_ok = self.hardware_states["camera"]
         create_pill("📷 CAMERA", c_text, c_ok)
 
     def render_diagnostics(self, mouse_kb_status: str, audio_status: str, audio_ok: bool, camera_status: str, camera_ok: bool):
         """
-        Constructs Stage 1 checklist widgets.
+        Constructs Stage 1 checklist and Camera selection wizard widgets.
         """
         self.hardware_states["mouse"] = (mouse_kb_status, True)
         self.hardware_states["speakers"] = (audio_status, audio_ok)
         self.hardware_states["camera"] = (camera_status, camera_ok)
-        self.hardware_states["network"] = ("CONNECTED" if "Webcam" in camera_status or not camera_ok else "LOCAL BRIDGE", not (not audio_ok or not camera_ok))
 
         for child in self.diag_frame.winfo_children():
             child.destroy()
 
         # Banner Ribbon Title
-        header = tk.Frame(self.diag_frame, bg=self.card_color, relief=tk.SOLID, bd=1, highlightbackground=self.border_color)
+        header = GradientCanvas(self.diag_frame, color1="#1e1b4b", color2="#311042", text="🛡️ AI MEDICINE ASSISTANT SETUP WIZARD", font=("Segoe UI", 20, "bold"), fg="#c084fc", height=60)
         header.pack(fill=tk.X, pady=(15, 10), padx=20)
-        
-        tk.Label(header, text="🔧 Pre-Flight System Diagnostics Checklist", font=("Segoe UI", 20, "bold"), fg=self.accent_color, bg=self.card_color, pady=15).pack()
 
-        # Render custom glowing pills ribbon
+        # Render status pills ribbon
         self._draw_status_pills(self.diag_frame)
+        btn_state = tk.NORMAL if camera_ok else tk.DISABLED
+        btn_bg = self.success_color if camera_ok else self.border_color
+        btn_fg = "#09090b" if camera_ok else self.muted_color
+        hover_color = "#059669" if camera_ok else self.accent_color
+        
+        self.proceed_btn = self._create_premium_button(self.diag_frame, "🚀 Launch Main Accessibility Dashboard", btn_bg, btn_fg, 
+                                                       self._trigger_proceed, hover_bg=hover_color)
+        self.proceed_btn.configure(state=btn_state)
+        self.proceed_btn.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(5, 20))
 
-        # Main diagnostics card container
-        card = tk.Frame(self.diag_frame, bg=self.card_color, relief=tk.SOLID, bd=1, highlightbackground=self.border_color)
-        card.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
+        # Main diagnostics card container (split columns)
+        card = tk.Frame(self.diag_frame, bg=self.card_color, highlightthickness=1, highlightbackground=self.border_color, highlightcolor=self.border_color, bd=0)
+        card.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=20, pady=10)
+        self._bind_hover_glow(card, normal_border=self.border_color, hover_border=self.accent_color)
 
-        # Checklist rows
+        # Two-column structure: Left for options, Right for camera live verification
+        left_col = tk.Frame(card, bg=self.card_color)
+        left_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        right_col = tk.Frame(card, bg=self.card_color)
+        right_col.pack(side=tk.RIGHT, fill=tk.BOTH, padx=20, pady=20)
+
+        # --- LEFT COLUMN CONTENT ---
+        # 1. System diagnostics checks
+        diag_box = tk.LabelFrame(left_col, text=" SYSTEM DIAGNOSTICS CHECKS ", font=("Segoe UI", 10, "bold"),
+                                   bg=self.card_color, fg=self.accent_color, highlightthickness=1, highlightbackground=self.border_color, highlightcolor=self.border_color, bd=0, padx=15, pady=10)
+        diag_box.pack(fill=tk.X, pady=(0, 15))
+        self._bind_hover_glow(diag_box, normal_bg=self.card_color, hover_bg="#202024", normal_border=self.border_color, hover_border=self.accent_color)
+
         def add_row(parent, icon, label, status_text, is_ok):
             row = tk.Frame(parent, bg=self.card_color)
-            row.pack(fill=tk.X, pady=10, padx=25)
+            row.pack(fill=tk.X, pady=6)
             
-            lbl = tk.Label(row, text=f"{icon}  {label}", font=("Segoe UI", 13, "bold"), fg=self.text_color, bg=self.card_color)
+            lbl = tk.Label(row, text=f"{icon}  {label}", font=("Segoe UI", 10, "bold"), fg=self.text_color, bg=self.card_color)
             lbl.pack(side=tk.LEFT)
             
             glow_color = self.success_color if is_ok else self.alert_color
-            status_lbl = tk.Label(row, text=status_text.upper(), font=("Segoe UI", 11, "bold"), fg=glow_color, bg=self.card_color)
+            status_lbl = tk.Label(row, text=status_text.upper(), font=("Segoe UI", 9, "bold"), fg=glow_color, bg=self.card_color)
             status_lbl.pack(side=tk.RIGHT)
 
-        add_row(card, "⌨️", "Accessibility Tactile Peripherals (Keyboard/Mouse)", mouse_kb_status, True)
-        add_row(card, "🔊", "Default SAPI5 Speaker Output Driver", audio_status, audio_ok)
-        add_row(card, "📷", "Local Hardware USB Camera Capture Index", camera_status, camera_ok)
+        add_row(diag_box, "⌨️", "Tactile Peripherals", mouse_kb_status, True)
+        add_row(diag_box, "🔊", "SAPI5 Audio System", audio_status, audio_ok)
 
-        # Premium IP entry field container
-        needs_network = (not audio_ok) or (not camera_ok)
-        net_box = tk.LabelFrame(card, text=" PREMIUM NETWORK PIPELINE BRIDGE CONFIGURATION ", font=("Segoe UI", 11, "bold"),
-                                  bg=self.card_color, fg=self.accent_color, relief=tk.SOLID, bd=1)
-        net_box.pack(fill=tk.X, padx=25, pady=20)
+        # 2. Camera Configuration options card (Ask about camera source)
+        camera_box = tk.LabelFrame(left_col, text=" CAMERA CONNECTION INTEGRATION ", font=("Segoe UI", 10, "bold"),
+                                     bg=self.card_color, fg=self.accent_color, highlightthickness=1, highlightbackground=self.border_color, highlightcolor=self.border_color, bd=0, padx=15, pady=15)
+        camera_box.pack(fill=tk.X, pady=5)
+        self._bind_hover_glow(camera_box, normal_bg=self.card_color, hover_bg="#202024", normal_border=self.border_color, hover_border=self.accent_color)
 
-        desc = "CRITICAL BIND ACTIVE: Direct hardware inputs missing. Please connect mobile webcam client server to route frame inputs." if needs_network else \
-               "OPTIONAL BIND ACTIVE: Local hardware intact. You may optionally bridge a wireless IP Webcam link over Wi-Fi."
-        tk.Label(net_box, text=desc, font=("Segoe UI", 11), fg=self.muted_color, bg=self.card_color, wraplength=900, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=8)
+        tk.Label(camera_box, text="How would you like to connect your camera device?", font=("Segoe UI", 11), fg=self.muted_color, bg=self.card_color).pack(anchor=tk.W, pady=(0, 10))
 
-        input_row = tk.Frame(net_box, bg=self.card_color)
-        input_row.pack(fill=tk.X, padx=20, pady=10)
+        # Radio buttons to choose camera type
+        radio_frame = tk.Frame(camera_box, bg=self.card_color)
+        radio_frame.pack(fill=tk.X, pady=5)
 
-        tk.Label(input_row, text="Mobile IP Camera Target URI: ", font=("Segoe UI", 12, "bold"), fg=self.text_color, bg=self.card_color).pack(side=tk.LEFT)
-        
-        self.net_entry = tk.Entry(input_row, textvariable=self.ip_url_var, font=("Segoe UI", 12),
-                                  bg="#242433", fg=self.text_color, bd=0, insertbackground="white",
-                                  highlightbackground=self.border_color, highlightcolor=self.accent_color, highlightthickness=1)
-        self.net_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=15, ipady=6)
+        # Container slots for toggleable controls
+        toggle_frame = tk.Frame(camera_box, bg=self.card_color)
+        toggle_frame.pack(fill=tk.X, pady=10)
 
-        # Stylized Connection button
-        self.bind_btn = self._create_premium_button(net_box, "⚡ Initialize Connection Bridge", self.accent_color, self.text_color, 
-                                                    self._trigger_bind_network, hover_bg=self.hover_color)
-        self.bind_btn.pack(fill=tk.X, padx=20, pady=(5, 15))
+        # Local Webcam UI Box
+        local_widget_frame = tk.Frame(toggle_frame, bg=self.card_color)
+        tk.Label(local_widget_frame, text="🔌 Local Webcam: ", font=("Segoe UI", 11, "bold"), fg=self.text_color, bg=self.card_color).pack(side=tk.LEFT)
+        self.local_status_lbl = tk.Label(local_widget_frame, text="Auto-detecting...", font=("Segoe UI", 11, "italic"), fg=self.warning_color, bg=self.card_color)
+        self.local_status_lbl.pack(side=tk.LEFT, padx=10)
 
-        # Bottom Proceed switch button
-        self.proceed_btn = self._create_premium_button(self.diag_frame, "🚀 Launch Main Accessibility Dashboard", self.border_color, self.muted_color, 
-                                                       self._trigger_proceed, hover_bg=self.accent_color)
-        self.proceed_btn.configure(state=tk.DISABLED)
-        self.proceed_btn.pack(fill=tk.X, padx=20, pady=(5, 20))
+        # IP Webcam UI Box
+        ip_widget_frame = tk.Frame(toggle_frame, bg=self.card_color)
+        tk.Label(ip_widget_frame, text="IP Camera Stream URL: ", font=("Segoe UI", 11, "bold"), fg=self.text_color, bg=self.card_color).pack(side=tk.LEFT)
+        ip_entry = tk.Entry(ip_widget_frame, textvariable=self.ip_url_var, font=("Segoe UI", 11),
+                            bg="#242433", fg=self.text_color, bd=0, insertbackground="white",
+                            highlightbackground=self.border_color, highlightcolor=self.accent_color, highlightthickness=1)
+        ip_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10, ipady=4)
 
-        if not needs_network:
-            self.proceed_btn.configure(state=tk.NORMAL, bg=self.success_color, fg="#121212")
+        self.scan_wifi_btn = self._create_premium_button(ip_widget_frame, "🔍 Auto-Scan Wi-Fi", self.accent_color, self.text_color,
+                                                         self._trigger_scan_wifi, hover_bg=self.hover_color, font=("Segoe UI", 9, "bold"), height=1)
+        self.scan_wifi_btn.configure(padx=10, pady=4)
+        self.scan_wifi_btn.pack(side=tk.RIGHT, padx=5)
+
+        self.local_widget_frame = local_widget_frame
+        self.ip_widget_frame = ip_widget_frame
+
+        usb_radio = tk.Radiobutton(radio_frame, text="🔌 Local USB Webcam", variable=self.camera_type_var, value="local",
+                                    font=("Segoe UI", 11), bg=self.card_color, fg=self.text_color, selectcolor=self.card_color,
+                                    activebackground=self.card_color, activeforeground=self.accent_color, command=self.switch_camera_inputs)
+        usb_radio.pack(side=tk.LEFT, padx=(0, 20))
+
+        ip_radio = tk.Radiobutton(radio_frame, text="🌐 Wireless IP Camera", variable=self.camera_type_var, value="ip",
+                                    font=("Segoe UI", 11), bg=self.card_color, fg=self.text_color, selectcolor=self.card_color,
+                                    activebackground=self.card_color, activeforeground=self.accent_color, command=self.switch_camera_inputs)
+        ip_radio.pack(side=tk.LEFT, padx=10)
+
+        # Trigger initial packing layout
+        self.switch_camera_inputs()
+
+        # Connect button
+        self.verify_btn = self._create_premium_button(camera_box, "⚡ Verify Camera Connection", self.accent_color, self.text_color,
+                                                      self._trigger_verify_camera, hover_bg=self.hover_color)
+        self.verify_btn.pack(fill=tk.X, pady=(15, 0))
+
+        # --- RIGHT COLUMN CONTENT ---
+        # Live Preview Bounding Box
+        preview_box = tk.LabelFrame(right_col, text=" HARDWARE LIVE PREVIEW FEED ", font=("Segoe UI", 10, "bold"),
+                                    bg=self.card_color, fg=self.accent_color, highlightthickness=1, highlightbackground=self.border_color, highlightcolor=self.accent_color, bd=0, padx=15, pady=15)
+        preview_box.pack(fill=tk.BOTH, expand=True)
+        self._bind_hover_glow(preview_box, normal_bg=self.card_color, hover_bg="#202024", normal_border=self.border_color, hover_border=self.accent_color)
+
+        self.preview_canvas = tk.Label(preview_box, text="[ PREVIEW STANDBY ]\n\nChoose camera source on left\nand click 'Verify Camera Connection'.",
+                                       font=("Segoe UI", 10), bg="#050507", fg=self.muted_color, relief=tk.SOLID, bd=1, width=42, height=16)
+        self.preview_canvas.pack(fill=tk.BOTH, expand=True)
+
+        if camera_ok:
+            self.unlock_proceed()
 
     def unlock_proceed(self):
         """
         Enables user launch transitions.
         """
-        self.proceed_btn.configure(state=tk.NORMAL, bg=self.success_color, fg="#121212")
+        self.proceed_btn.default_bg = self.success_color
+        self.proceed_btn.hover_bg = "#059669"
+        self.proceed_btn.configure(state=tk.NORMAL, bg=self.success_color, fg="#09090b",
+                                   highlightbackground=self.success_color, highlightcolor=self.success_color)
         logger.info("Diagnostics clear. Stage 2 launch interface unlocked.")
 
-    def _trigger_bind_network(self):
-        val = self.ip_url_var.get().strip()
-        if self.bind_network_callback and val:
-            self.bind_network_callback(val)
+    def update_preview_frame(self, pil_image: Image.Image):
+        """
+        Updates the small preview canvas in the diagnostic setup stage.
+        """
+        try:
+            if not self.preview_canvas.winfo_exists():
+                return
+            width = self.preview_canvas.winfo_width()
+            height = self.preview_canvas.winfo_height()
+            if width <= 10: width = 360
+            if height <= 10: height = 270
+            
+            resized_img = pil_image.resize((width, height), Image.Resampling.BILINEAR)
+            tk_img = ImageTk.PhotoImage(resized_img)
+            
+            self.preview_canvas.configure(image=tk_img, text="")
+            self.preview_canvas.image = tk_img
+        except Exception as e:
+            logger.debug(f"Preview frame render mismatch: {e}")
+
+    def _trigger_verify_camera(self):
+        mode = self.camera_type_var.get()
+        source = self.usb_index_var.get().strip() if mode == "local" else self.ip_url_var.get().strip()
+        if self.verify_camera_callback:
+            self.verify_camera_callback(mode, source)
 
     def _trigger_proceed(self):
+        if self.proceed_btn['state'] == tk.DISABLED:
+            self.speak_feedback("Cannot launch workspace. Please verify your camera connection first by pressing V.")
+            return
         self.diag_frame.pack_forget()
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         self._build_stage2_workspace()
@@ -227,10 +464,8 @@ class MedicineAssistantGUI:
             child.destroy()
 
         # Ribbon Status Header
-        header = tk.Frame(self.main_frame, bg=self.card_color, relief=tk.SOLID, bd=1, highlightbackground=self.border_color)
+        header = GradientCanvas(self.main_frame, color1="#1e1b4b", color2="#311042", text="👁️ AI MEDICINE ASSISTANT SYSTEM", font=("Segoe UI", 20, "bold"), fg="#c084fc", height=60)
         header.pack(fill=tk.X, side=tk.TOP, padx=20, pady=(15, 5))
-        
-        tk.Label(header, text="👁️ AI MEDICINE ACCISTANT SYSTEM", font=("Segoe UI", 20, "bold"), fg=self.accent_color, bg=self.card_color, pady=10).pack()
 
         # Workspace split frames
         split_workspace = tk.Frame(self.main_frame, bg=self.bg_color)
@@ -242,10 +477,11 @@ class MedicineAssistantGUI:
 
         tk.Label(left_panel, text="📷 LIVE STREAM ACCESSIBILITY FEED", font=("Segoe UI", 12, "bold"), fg=self.accent_color, bg=self.bg_color).pack(anchor=tk.W, pady=(0, 6))
 
-        # Geometric neon bounding wrapper (fixed constraints to prevent dynamic layout sliding)
-        self.video_wrapper = tk.Frame(left_panel, bg="#000000", width=640, height=480, relief=tk.SOLID, bd=2, highlightbackground=self.accent_color, highlightcolor=self.accent_color)
+        # Geometric neon bounding wrapper
+        self.video_wrapper = tk.Frame(left_panel, bg="#000000", width=640, height=480, highlightthickness=2, highlightbackground=self.accent_color, highlightcolor=self.accent_color, bd=0)
         self.video_wrapper.pack_propagate(False)
         self.video_wrapper.pack(fill=tk.BOTH, expand=True)
+        self._bind_hover_glow(self.video_wrapper, normal_border=self.accent_color, hover_border=self.success_color)
 
         self.video_canvas = tk.Label(self.video_wrapper, bg="#000000")
         self.video_canvas.pack(fill=tk.BOTH, expand=True)
@@ -276,8 +512,9 @@ class MedicineAssistantGUI:
 
         # Intelligent Card Container
         metrics_box = tk.LabelFrame(desk_card, text=" DETECTED PRODUCT SIGNATURE ", font=("Segoe UI", 12, "bold"),
-                                    bg=self.card_color, fg=self.accent_color, relief=tk.SOLID, bd=1, padx=20, pady=20)
+                                    bg=self.card_color, fg=self.accent_color, highlightthickness=1, highlightbackground=self.border_color, highlightcolor=self.border_color, bd=0, padx=20, pady=20)
         metrics_box.pack(fill=tk.X, pady=(0, 15))
+        self._bind_hover_glow(metrics_box, normal_bg=self.card_color, hover_bg="#202024", normal_border=self.border_color, hover_border=self.accent_color)
 
         # Premium Row Spawners
         def spawn_row(parent, title, text, text_color="#FFFFFF", font_size=11):
@@ -287,15 +524,15 @@ class MedicineAssistantGUI:
             lbl_title = tk.Label(row, text=f"{title}:", font=("Segoe UI", 11, "bold"), fg=self.muted_color, bg=self.card_color)
             lbl_title.pack(side=tk.LEFT, anchor=tk.NW)
             
-            lbl_val = tk.Label(row, text=text, font=("Segoe UI", font_size, "bold"), fg=text_color, bg=self.card_color, wraplength=280, justify=tk.LEFT)
+            lbl_val = tk.Label(row, text=text, font=("Segoe UI", font_size, "bold"), fg=text_color, bg=self.card_color, wraplength=240, justify=tk.LEFT)
             lbl_val.pack(side=tk.RIGHT, anchor=tk.NE)
             return lbl_val
 
-        self.drug_name_lbl = spawn_row(metrics_box, "Medicine Name", "Waiting...", font_size=15, text_color=self.success_color)
-        self.strength_lbl = spawn_row(metrics_box, "Product Strength", "-")
-        self.form_lbl = spawn_row(metrics_box, "Dosage Form", "-")
-        self.mfg_lbl = spawn_row(metrics_box, "Manufacturer", "-")
-        self.price_lbl = spawn_row(metrics_box, "Therapeutic Class", "-")
+        self.drug_name_lbl = spawn_row(metrics_box, "💊 Medicine Name", "Waiting...", font_size=15, text_color=self.success_color)
+        self.strength_lbl = spawn_row(metrics_box, "⚡ Product Strength", "-")
+        self.form_lbl = spawn_row(metrics_box, "📋 Dosage Form", "-")
+        self.mfg_lbl = spawn_row(metrics_box, "🏭 Manufacturer", "-")
+        self.price_lbl = spawn_row(metrics_box, "🔬 Therapeutic Class", "-")
 
         # Large Text Blocks
         tk.Label(metrics_box, text="Verified Medical Indications:", font=("Segoe UI", 10, "bold"), fg=self.accent_color, bg=self.card_color).pack(anchor=tk.W, pady=(15, 2))
@@ -319,16 +556,16 @@ class MedicineAssistantGUI:
         controls = tk.Frame(desk_card, bg=self.bg_color)
         controls.pack(fill=tk.X)
 
-        self.capture_btn = self._create_premium_button(controls, "📸 CAPTURE BOTTLE LABEL [SPACE / C]", self.success_color, "#121212",
-                                                       self._trigger_capture, hover_bg="#00D2B4")
+        self.capture_btn = self._create_premium_button(controls, "📸 CAPTURE BOTTLE LABEL [SPACE / C]", self.success_color, "#09090b",
+                                                       self._trigger_capture, hover_bg="#059669")
         self.capture_btn.pack(fill=tk.X, pady=4)
 
-        self.reset_btn = self._create_premium_button(controls, "🔄 RETRY LIVE SCANNER FEED [R]", self.warning_color, "#121212",
-                                                     self._trigger_reset, hover_bg="#E29E00")
+        self.reset_btn = self._create_premium_button(controls, "🔄 RETRY LIVE SCANNER FEED [R]", self.warning_color, "#09090b",
+                                                     self._trigger_reset, hover_bg="#d97706")
         self.reset_btn.pack(fill=tk.X, pady=4)
 
         self.quit_btn = self._create_premium_button(controls, "🛑 SHUTDOWN SYSTEM WORKSPACE [Q]", self.alert_color, self.text_color,
-                                                    self._trigger_quit, hover_bg="#D00042")
+                                                    self._trigger_quit, hover_bg="#e11d48")
         self.quit_btn.pack(fill=tk.X, pady=4)
 
         # Online Fallback Button
@@ -345,6 +582,42 @@ class MedicineAssistantGUI:
         self.root.bind("<Q>", lambda e: self._trigger_quit())
         self.root.bind("<i>", lambda e: self._trigger_online_search())
         self.root.bind("<I>", lambda e: self._trigger_online_search())
+        self.root.bind("<u>", lambda e: self._select_camera_type("local"))
+        self.root.bind("<U>", lambda e: self._select_camera_type("local"))
+        self.root.bind("<w>", lambda e: self._select_camera_type("ip"))
+        self.root.bind("<W>", lambda e: self._select_camera_type("ip"))
+        self.root.bind("<v>", lambda e: self._trigger_verify_camera())
+        self.root.bind("<V>", lambda e: self._trigger_verify_camera())
+        self.root.bind("<l>", lambda e: self._trigger_proceed())
+        self.root.bind("<L>", lambda e: self._trigger_proceed())
+
+    def _select_camera_type(self, mode: str):
+        self.camera_type_var.set(mode)
+        self.switch_camera_inputs()
+
+    def switch_camera_inputs(self):
+        if not hasattr(self, 'local_widget_frame') or not hasattr(self, 'ip_widget_frame'):
+            return
+        mode = self.camera_type_var.get()
+        if mode == "local":
+            self.ip_widget_frame.pack_forget()
+            self.local_widget_frame.pack(fill=tk.X, pady=5)
+            if hasattr(self, 'verify_btn'):
+                self.verify_btn.configure(text="🔄 Rescan Local Hardware Cameras")
+            self.speak_feedback("Auto-detecting local hardware camera.")
+        else:
+            self.local_widget_frame.pack_forget()
+            self.ip_widget_frame.pack(fill=tk.X, pady=5)
+            if hasattr(self, 'verify_btn'):
+                self.verify_btn.configure(text="⚡ Connect & Verify IP Camera")
+            self.speak_feedback("Selected Wireless IP Camera stream input.")
+
+        if self.camera_type_change_callback:
+            self.camera_type_change_callback(mode)
+
+    def speak_feedback(self, text: str):
+        if hasattr(self, 'speak_callback') and self.speak_callback:
+            self.speak_callback(text, True)
 
     def _trigger_capture(self):
         if self.capture_callback:
@@ -361,6 +634,10 @@ class MedicineAssistantGUI:
     def _trigger_online_search(self):
         if hasattr(self, 'online_search_callback') and self.online_search_callback:
             self.online_search_callback()
+
+    def _trigger_scan_wifi(self):
+        if hasattr(self, 'scan_wifi_callback') and self.scan_wifi_callback:
+            self.scan_wifi_callback()
 
     def update_video_frame(self, pil_image: Image.Image):
         """
@@ -417,7 +694,7 @@ class MedicineAssistantGUI:
         
         # Enforce gorgeous glow success status
         self.update_status(f"MATCH SUCCESSFUL ({score*100:.0f}% ACCURACY)", self.success_color)
-        self.status_bar.configure(fg="#121212")
+        self.status_bar.configure(fg="#09090b")
 
         # Set Data Source row
         if data_source.upper() == "ONLINE":
@@ -446,7 +723,7 @@ class MedicineAssistantGUI:
         self.side_effects_txt.configure(state=tk.DISABLED)
 
         self.data_source_lbl.configure(text="Data Source: FAILED MATCH DEFERRAL", fg=self.alert_color)
-        self.update_status("SAFETY CHECK PENDING: Pleae align bottle flat", self.alert_color)
+        self.update_status("SAFETY CHECK PENDING: Please align bottle flat", self.alert_color)
         self.status_bar.configure(fg=self.text_color)
 
     def show_online_search_button(self):

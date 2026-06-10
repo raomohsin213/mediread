@@ -9,6 +9,8 @@ import numpy as np
 import threading
 import queue
 import time
+import socket
+import concurrent.futures
 import tkinter as tk
 from PIL import Image, ImageTk
 import logging
@@ -112,26 +114,57 @@ class ThreadedCamera:
     Continuously grabs frames into a buffer protected by a threading Lock,
     preventing I/O lag from dragging down the Tkinter main UI thread.
     """
-    def __init__(self, source_or_cap):
+    def __init__(self, source_or_cap, is_ip: bool = False):
         self.cap = source_or_cap
+        self.is_ip = is_ip
         self.ret = False
         self.frame = None
         self.is_running = True
         self.lock = threading.Lock()
         
+        # Optimize OpenCV internal buffer size
+        try:
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception as e:
+            logger.debug(f"Failed to set CAP_PROP_BUFFERSIZE: {e}")
+            
         self.thread = threading.Thread(target=self._update_loop, daemon=True)
         self.thread.start()
 
     def _update_loop(self):
         while self.is_running:
             if self.cap:
+                t0 = time.time()
                 ret, frame = self.cap.read()
-                with self.lock:
-                    self.ret = ret
-                    if ret and frame is not None:
-                        self.frame = frame.copy()
-            # Fast loop but sleeping slightly to prevent CPU thread starvation
-            time.sleep(0.01)
+                t1 = time.time()
+                
+                if ret and frame is not None:
+                    # Optimize for low-end PCs: scale down very large frames
+                    h, w = frame.shape[:2]
+                    max_w = 640 if self.is_ip else 1024
+                    if w > max_w:
+                        scale = max_w / w
+                        new_h = int(h * scale)
+                        frame = cv2.resize(frame, (max_w, new_h), interpolation=cv2.INTER_LINEAR)
+                        
+                    with self.lock:
+                        self.ret = ret
+                        self.frame = frame
+                    
+                    # Prevent buffer build-up:
+                    # If elapsed time is very small, we are reading buffered frames.
+                    # Loop immediately without sleeping to drain the queue and catch up to real-time.
+                    elapsed = t1 - t0
+                    if elapsed < 0.005:
+                        pass # Loop immediately to drain the buffer
+                    else:
+                        # Synced to frame rate, sleep a tiny bit to prevent CPU starvation
+                        time.sleep(0.002)
+                else:
+                    # Sleep slightly longer on failures before retrying
+                    time.sleep(0.05)
+            else:
+                time.sleep(0.05)
 
     def read(self) -> tuple[bool, Optional[np.ndarray]]:
         with self.lock:
@@ -167,8 +200,10 @@ class MainAppController:
         self.gui.reset_callback = self.trigger_live_retry
         self.gui.quit_callback = self.clean_shutdown
         self.gui.proceed_callback = self.proceed_to_stage2
-        self.gui.bind_network_callback = self.bind_network_pipeline
+        self.gui.verify_camera_callback = self.verify_camera_connection
         self.gui.online_search_callback = self.trigger_online_search
+        self.gui.scan_wifi_callback = self.scan_wifi_network
+        self.gui.camera_type_change_callback = self.handle_camera_type_change
 
         # Window closing redirect (Q hotkey equivalent)
         self.root.protocol("WM_DELETE_WINDOW", self.clean_shutdown)
@@ -178,6 +213,7 @@ class MainAppController:
         self.audio = None
         self.is_camera_simulated = False
         self.active_camera_source = 0
+        self.is_scanning_local = False
 
         self.is_frozen = False
         self.processing_ocr = False
@@ -194,129 +230,330 @@ class MainAppController:
         # Run pre-flight diagnostics to discover system hardware configurations
         self.run_preflight_diagnostics()
 
+        # Start Hotplug Monitor
+        self._hotplug_running = True
+        threading.Thread(target=self._hotplug_monitor, daemon=True).start()
+
     def run_preflight_diagnostics(self):
         """
-        Hardware Inventory Scan. Checks local speakers and OpenCV camera inputs,
-        then updates Stage 1 splash diagnostics screen.
+        Hardware Integrity Scan. Checks default speakers and keyboard,
+        then updates Stage 1 splash wizard diagnostics screen.
         """
         logger.info("Commencing pre-flight diagnostics checks...")
         
-        # A. Mouse and Keyboard (Always marked as connected for accessibility input)
-        mouse_kb_status = "CONNECTED (Standard Desktop Input Devices)"
+        # A. Keyboard and Mouse
+        mouse_kb_status = "CONNECTED (Keyboard/Mouse Detected)"
 
         # B. Sound card scan
         audio_ok = True
-        audio_status = "CONNECTED (Local SAPI5 Audio Card)"
+        audio_status = "CONNECTED (SAPI5 Speakers)"
         try:
-            import pyttsx3
-            # Brief check to ensure driver initialization completes cleanly
-            engine = pyttsx3.init()
-            del engine
+            import win32com.client
+            voice = win32com.client.Dispatch("SAPI.SpVoice")
+            del voice
         except Exception as e:
-            audio_ok = False
-            audio_status = "LOCAL AUDIO MISSING - REDIRECTING TO NETWORK SOCKET PORT 8085"
-            logger.warning(f"Local audio driver check failed: {e}. Defaulting to network socket routing.")
+            try:
+                import comtypes.client
+                voice = comtypes.client.CreateObject("SAPI.SpVoice")
+                del voice
+            except Exception as e2:
+                audio_ok = False
+                audio_status = "LOCAL AUDIO MISSING"
+                logger.warning(f"Local audio SAPI5 check failed: {e2}")
 
-        # C. Camera hardware scan
-        camera_ok = True
-        camera_status = "CONNECTED (Local PC Hardware Webcam)"
-        try:
-            test_cap = cv2.VideoCapture(0)
-            if test_cap is not None and test_cap.isOpened():
-                ret, frame = test_cap.read()
-                test_cap.release()
-                if not (ret and frame is not None):
-                    camera_ok = False
-            else:
-                camera_ok = False
-        except Exception as e:
-            camera_ok = False
-            logger.warning(f"Local camera check crashed: {e}")
-
-        if not camera_ok:
-            camera_status = "LOCAL CAMERA MISSING - ROUTING TO NETWORK RECEIVER"
-
-        # Update GUI Splashes
-        self.gui.render_diagnostics(mouse_kb_status, audio_status, audio_ok, camera_status, camera_ok)
-
-        # pre-mount direct local hardware pathways if successfully scanned
+        # Initialize audio engine
         if audio_ok:
             self.audio = AudioEngine(local_mode=True)
         else:
-            self.audio = AudioEngine(local_mode=False, network_ip="127.0.0.1")
+            self.audio = AudioEngine(local_mode=False)
 
-        if camera_ok:
-            cap_source = cv2.VideoCapture(0)
-            cap_source.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap_source.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            self.cap = ThreadedCamera(cap_source)
-            self.active_camera_source = 0
-            self.is_camera_simulated = False
+        # Connect speech callback to GUI accessibility hooks
+        self.gui.speak_callback = self.audio.speak_message
+
+        # C. Initial render of diagnostics wizard
+        self.gui.render_diagnostics(mouse_kb_status, audio_status, audio_ok, "SELECT CAMERA SOURCE", False)
+
+        # Speak setup wizard accessibility instructions
+        welcome_instructions = (
+            "Welcome to the AI Medicine Assistant Setup Wizard. "
+            "Please verify your camera connection. "
+            "Press U for Local USB Webcam, or W for Wireless IP Camera. "
+            "Then press V to verify the connection. "
+            "Once verified, press L to launch the main workspace dashboard. "
+            "You can press Q to quit the program at any time."
+        )
+        self.audio.speak_message(welcome_instructions)
+
+        # State variable for preview
+        self.is_previewing = False
+
+        # Note: Auto-detection on initial run is handled by the unified hotplug monitor
+        
+    def _hotplug_monitor(self):
+        """
+        Background daemon that continuously checks for newly plugged in local webcams
+        if the system is disconnected or in simulator mode, automatically connecting them.
+        """
+        while self._hotplug_running:
+            try:
+                if (self.cap is None or self.is_camera_simulated) and not getattr(self, 'is_scanning_local', False):
+                    test_cap = cv2.VideoCapture(0)
+                    if test_cap is not None and test_cap.isOpened():
+                        ret, frame = test_cap.read()
+                        test_cap.release()
+                        if ret and frame is not None:
+                            logger.info("Hotplug detected! Auto-switching to Local USB Webcam.")
+                            self.root.after(0, lambda: self.gui.camera_type_var.set("local"))
+                            self.root.after(0, lambda: self.gui.usb_index_var.set("0"))
+                            self.root.after(0, lambda: self.gui.switch_camera_inputs())
+                            self.root.after(0, lambda: self.verify_camera_connection("local", "0"))
+                            # Sleep a bit to allow connection to settle
+                            time.sleep(5.0)
+                    else:
+                        if test_cap:
+                            test_cap.release()
+            except Exception:
+                pass
+            time.sleep(3.0)
+
+    def scan_wifi_network(self):
+        """
+        Multithreaded network scanner that rapidly pings the local /24 subnet on 
+        common IP camera ports (8080, 4747) to automatically discover streaming devices.
+        """
+        self.gui.update_status("SCANNING WI-FI NETWORK FOR CAMERAS...", self.gui.orange_btn)
+        self.audio.speak_message("Scanning local network for mobile cameras.", interrupt=True)
+        
+        def scanner_worker():
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+                
+                base_ip = ".".join(local_ip.split(".")[:-1])
+                ports = [8080, 4747]
+                found_url = None
+                
+                def check_ip(ip, port):
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(0.5)
+                    result = sock.connect_ex((ip, port))
+                    sock.close()
+                    if result == 0:
+                        return f"http://{ip}:{port}/video"
+                    return None
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+                    futures = []
+                    for i in range(1, 255):
+                        ip = f"{base_ip}.{i}"
+                        for port in ports:
+                            futures.append(executor.submit(check_ip, ip, port))
+                            
+                    for future in concurrent.futures.as_completed(futures):
+                        res = future.result()
+                        if res:
+                            found_url = res
+                            # Cancel others implicitly by breaking
+                            break
+                            
+                if found_url:
+                    self.root.after(0, lambda: self.gui.ip_url_var.set(found_url))
+                    self.root.after(0, lambda: self.gui.update_status("CAMERA FOUND ON WI-FI", self.gui.green_btn))
+                    self.audio.speak_message("Camera found. Connecting.", interrupt=True)
+                    self.root.after(0, lambda: self.verify_camera_connection("ip", found_url))
+                else:
+                    self.root.after(0, lambda: self.gui.update_status("NO CAMERAS FOUND ON WI-FI", self.gui.red_btn))
+                    self.audio.speak_message("No mobile cameras were found on your Wi-Fi network.", interrupt=True)
+            except Exception as e:
+                logger.error(f"Network scan failed: {e}")
+                self.root.after(0, lambda: self.gui.update_status("NETWORK SCAN ERROR", self.gui.red_btn))
+                
+        threading.Thread(target=scanner_worker, daemon=True).start()
+
+    def handle_camera_type_change(self, mode: str):
+        """
+        Triggers auto-detection if the user switches to local webcam.
+        """
+        if mode == "local":
+            self.auto_detect_local_camera()
+
+    def auto_detect_local_camera(self):
+        """
+        Scans webcam indices 0-3 in a background thread and automatically
+        connects to the first working webcam it finds.
+        """
+        self.is_scanning_local = True
+        self.gui.update_status("AUTO-DETECTING LOCAL WEBCAM...", self.gui.orange_btn)
+        self.gui.local_status_lbl.configure(text="Scanning...", fg=self.gui.warning_color)
+        self.audio.speak_message("Auto-detecting local hardware camera.", interrupt=True)
+        
+        def detect_worker():
+            try:
+                found_idx = None
+                for idx in range(4):
+                    logger.info(f"Scanning local camera index {idx}...")
+                    cap = cv2.VideoCapture(idx)
+                    if cap is not None and cap.isOpened():
+                        ret, frame = cap.read()
+                        cap.release()
+                        if ret and frame is not None:
+                            found_idx = idx
+                            break
+                
+                if found_idx is not None:
+                    logger.info(f"Auto-detected local camera at index {found_idx}")
+                    self.root.after(0, lambda: self.gui.usb_index_var.set(str(found_idx)))
+                    self.root.after(0, lambda: self.gui.local_status_lbl.configure(text=f"Connected (Index {found_idx})", fg=self.gui.success_color))
+                    self.root.after(0, lambda: self.verify_camera_connection("local", str(found_idx)))
+                else:
+                    logger.warning("No working local hardware camera detected.")
+                    self.root.after(0, lambda: self.gui.local_status_lbl.configure(text="Not Detected", fg=self.gui.alert_color))
+                    self.root.after(0, lambda: self.gui.update_status("NO WEBCAM DETECTED", self.gui.red_btn))
+                    self.audio.speak_message("No working local camera was detected. Please check connection.", interrupt=True)
+            finally:
+                self.is_scanning_local = False
+                
+        threading.Thread(target=detect_worker, daemon=True).start()
+
+    def verify_camera_connection(self, camera_type: str, camera_source: str):
+        """
+        Verifies the selected camera connection in a background thread and starts the preview loop.
+        """
+        self.gui.update_status("Verifying camera connection...", self.gui.orange_btn)
+        
+        # Stop any active preview and release camera
+        self.is_previewing = False
+        if self.cap:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+
+        def verify_worker():
+            try:
+                if camera_type == "simulator":
+                    logger.info("Verifying camera connection in simulator (demo) mode...")
+                    sim_cap = VirtualCameraSimulator(640, 480)
+                    self.cap = ThreadedCamera(sim_cap)
+                    self.active_camera_source = "simulator"
+                    self.is_camera_simulated = True
+                    
+                    self.root.after(0, lambda: self.gui.update_status("Simulator Verified Successfully", self.gui.green_btn))
+                    self.root.after(0, self.gui.unlock_proceed)
+                    self.root.after(0, lambda: self.gui.render_diagnostics(
+                        "CONNECTED (Keyboard/Mouse Detected)", 
+                        "CONNECTED (SAPI5 Speakers)" if self.audio.local_mode else "LOCAL AUDIO MISSING",
+                        self.audio.local_mode, 
+                        "CONNECTED (Camera Simulator)",
+                        True
+                    ))
+                    self.audio.speak_message("Simulator connection verified successfully.", interrupt=True)
+                    self.is_previewing = True
+                    self.root.after(0, self.refresh_preview_loop)
+                    return
+                elif camera_type == "local":
+                    try:
+                        idx = int(camera_source)
+                    except ValueError:
+                        idx = 0
+                    logger.info(f"Testing local hardware webcam index: {idx}")
+                    cap_src = cv2.VideoCapture(idx)
+                else:
+                    import re
+                    url = camera_source.strip()
+                    if not url.startswith(("http://", "https://", "rtsp://", "rtmp://")):
+                        url = "http://" + url
+                    
+                    # Check if standard suffix is missing (e.g. http://192.168.100.67:8080) and append /video
+                    match = re.match(r'^https?://[0-9a-zA-Z\.-]+(?::\d+)?/?$', url)
+                    if match:
+                        url = url.rstrip('/') + '/video'
+                        logger.info(f"Automatically appended '/video' stream route to IP address: '{url}'")
+
+                    logger.info(f"Testing IP Web Camera stream URL: '{url}'")
+                    cap_src = cv2.VideoCapture(url)
+
+                if cap_src is not None and cap_src.isOpened():
+                    # Read a couple of frames to warm up
+                    ret = False
+                    for _ in range(5):
+                        ret, frame = cap_src.read()
+                        if ret:
+                            break
+                        time.sleep(0.1)
+
+                    if ret and frame is not None:
+                        # Connection succeeded!
+                        self.cap = ThreadedCamera(cap_src, is_ip=(camera_type == "ip"))
+                        self.active_camera_source = int(camera_source) if camera_type == "local" else url
+                        self.is_camera_simulated = False
+                        
+                        logger.info("Successfully connected to camera device.")
+                        self.root.after(0, lambda: self.gui.update_status("Camera Verified Successfully", self.gui.green_btn))
+                        self.root.after(0, self.gui.unlock_proceed)
+                        
+                        # Re-render diagnostics indicators with verified status
+                        self.root.after(0, lambda: self.gui.render_diagnostics(
+                            "CONNECTED (Keyboard/Mouse Detected)", 
+                            "CONNECTED (SAPI5 Speakers)" if self.audio.local_mode else "LOCAL AUDIO MISSING",
+                            self.audio.local_mode, 
+                            "CONNECTED (" + ("USB Webcam" if camera_type == "local" else "IP Camera") + ")",
+                            True
+                        ))
+                        
+                        self.audio.speak_message("Camera connection verified successfully.", interrupt=True)
+                        
+                        # Start live preview inside diagnostics card
+                        self.is_previewing = True
+                        self.root.after(0, self.refresh_preview_loop)
+                        return
+                    else:
+                        if cap_src:
+                            cap_src.release()
+                
+                raise Exception("Failed to capture a valid frame from the camera source.")
+                
+            except Exception as e:
+                logger.error(f"Camera verification failed: {e}")
+                self.root.after(0, lambda: self.gui.update_status("Camera Verification Failed", self.gui.red_btn))
+                self.root.after(0, lambda: self.gui.render_diagnostics(
+                    "CONNECTED (Keyboard/Mouse Detected)", 
+                    "CONNECTED (SAPI5 Speakers)" if self.audio.local_mode else "LOCAL AUDIO MISSING",
+                    self.audio.local_mode, 
+                    "CONNECTION FAILED",
+                    False
+                ))
+                self.audio.speak_message("Camera connection failed. Please check the camera settings and try again.", interrupt=True)
+
+        threading.Thread(target=verify_worker, daemon=True).start()
+
+    def refresh_preview_loop(self):
+        """
+        Pulls frames from verified camera to display in the Stage 1 Setup Wizard.
+        """
+        if hasattr(self, 'is_previewing') and self.is_previewing and self.cap:
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                # Mirror horizontal flip (only for physical webcams)
+                if not self.is_camera_simulated and isinstance(self.active_camera_source, int):
+                    frame = cv2.flip(frame, 1)
+                
+                # Convert to RGB and send to GUI
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(rgb_frame)
+                self.gui.update_preview_frame(pil_img)
+                
+            # Loop preview feed (approx 15 FPS to preserve CPU during setup wizard)
+            self.root.after(66, self.refresh_preview_loop)
 
     def bind_network_pipeline(self, url_or_ip: str):
         """
-        Validates the user-provided network IP or Stream URL.
-        Binds the video and audio network sockets as fallback pathways.
+        Legacy wrapper. Replaced by verify_camera_connection.
         """
-        logger.info(f"Binding network pipeline target: '{url_or_ip}'")
-        self.gui.update_status("CONNECTING NETWORK BIND...", self.gui.orange_btn)
-        
-        # Determine if it's a raw IP or full URL
-        target_ip = url_or_ip
-        video_url = url_or_ip
-        if "://" in url_or_ip:
-            # Extract raw IP for audio socket streaming (e.g. http://192.168.100.67:8080/video -> 192.168.100.67)
-            try:
-                parts = url_or_ip.split("://")[1].split("/")[0].split(":")
-                target_ip = parts[0]
-            except Exception:
-                pass
-
-        def net_bind_worker():
-            video_connected = False
-            audio_connected = True # Defaults to True since socket is lazily bound
-            
-            # 1. Attempt Video Stream URL verification if it looks like a stream
-            if "://" in video_url or ":" in video_url:
-                try:
-                    test_cap = cv2.VideoCapture(video_url)
-                    if test_cap is not None and test_cap.isOpened():
-                        # Connection succeeded! Close previous and mount
-                        if self.cap:
-                            self.cap.release()
-                        self.cap = ThreadedCamera(test_cap)
-                        self.active_camera_source = video_url
-                        self.is_camera_simulated = False
-                        video_connected = True
-                        logger.info("Successfully bound network camera stream.")
-                except Exception as e:
-                    logger.error(f"Failed to bind video URL: {e}")
-
-            # 2. Redirect Audio Engine to target network IP on port 8085
-            try:
-                local_speech_enabled = True
-                try:
-                    import pyttsx3
-                    engine = pyttsx3.init()
-                    del engine
-                except Exception:
-                    local_speech_enabled = False
-
-                self.audio = AudioEngine(tcp_port=8085, local_mode=local_speech_enabled, network_ip=target_ip)
-                logger.info(f"Successfully redirected audio socket port 8085 to target laptop/mobile IP: {target_ip} (Local Mode: {local_speech_enabled})")
-            except Exception as e:
-                logger.error(f"Failed to bind network audio socket: {e}")
-                audio_connected = False
-
-            if video_connected or audio_connected:
-                # Successfully resolved at least one pathway! Unlock proceed button
-                self.root.after(0, self.gui.unlock_proceed)
-                self.root.after(0, lambda: self.gui.update_status("Network Pipeline Bound Successfully", self.gui.green_btn))
-                self.audio.speak_message("Network Pipeline Bound.")
-            else:
-                self.root.after(0, lambda: self.gui.update_status("Network Connection Mismatch", self.gui.red_btn))
-
-        threading.Thread(target=net_bind_worker, daemon=True).start()
+        self.verify_camera_connection("ip", url_or_ip)
 
     def proceed_to_stage2(self):
         """
@@ -325,8 +562,10 @@ class MainAppController:
         """
         logger.info("Diagnostics accepted. Proceeding to Medical Assistant Dashboard Stage 2...")
         
-        # If camera is still uninitialized (e.g. neither local webcam nor network stream was bound)
-        # Fall back to Virtual Camera Simulator so the app always launches gracefully
+        # Stop setup wizard preview loop
+        self.is_previewing = False
+        
+        # If camera is still uninitialized, fall back to simulator
         if self.cap is None:
             self._activate_simulator_camera()
 
@@ -385,6 +624,10 @@ class MainAppController:
                             elif "aligned" in guidance.lower():
                                 short_guidance = "Aligned"
                             self.audio.speak_message(short_guidance)
+                    else:
+                        # Periodically announce searching status if no container is in field of view
+                        if self.ai.should_speak_searching_guidance(guidance):
+                            self.audio.speak_message("Searching for medicine. Please place the container in front of the camera.")
 
                     # Update visual Tkinter frame canvas
                     rgb_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
@@ -419,13 +662,16 @@ class MainAppController:
         # Capture target pixels
         ocr_target_crop = self.live_crop if self.live_crop is not None else self.live_frame
 
+        # Save the current physical det_type at the moment of freeze
+        detected_type = self.ai.last_det_type
+
         # Run heavy EasyOCR neural networks inside isolated background thread
         def ocr_worker_thread():
             try:
                 extracted_text = self.ai.perform_ocr(ocr_target_crop)
                 
-                # Check local database using safety-critical find_medicine method
-                search_result, status = self.db.find_medicine(extracted_text)
+                # Check local database using safety-critical find_medicine method and pass physical shape constraints
+                search_result, status = self.db.find_medicine(extracted_text, physical_type=detected_type)
                 
                 # Push results back to main GUI thread safely via queue
                 self.result_queue.put((extracted_text, (search_result, status)))
@@ -449,27 +695,56 @@ class MainAppController:
             
             # Semi-transparent high-contrast dark overlay
             overlay = anim_frame.copy()
-            cv2.rectangle(overlay, (0, 0), (w, h), (18, 18, 18), -1)
-            cv2.addWeighted(overlay, 0.75, anim_frame, 0.25, 0, anim_frame)
+            cv2.rectangle(overlay, (0, 0), (w, h), (10, 10, 15), -1)
+            cv2.addWeighted(overlay, 0.70, anim_frame, 0.30, 0, anim_frame)
             
             # Coordinates
             center_x, center_y = w // 2, h // 2
             
-            # Neon Gold outline border
-            cv2.rectangle(anim_frame, (center_x - 210, center_y - 45), (center_x + 210, center_y + 45), (0, 215, 255), 2)
-            cv2.rectangle(anim_frame, (center_x - 215, center_y - 50), (center_x + 215, center_y + 50), (0, 165, 255), 1)
+            # Draw professional UI corner brackets [ ] on the frame
+            box_w, box_h = 420, 240
+            bx1, by1 = center_x - box_w // 2, center_y - box_h // 2
+            bx2, by2 = center_x + box_w // 2, center_y + box_h // 2
             
+            # Corners styling
+            corner_len = 25
+            # Top-left
+            cv2.line(anim_frame, (bx1, by1), (bx1 + corner_len, by1), (139, 92, 246), 3) # Violet color
+            cv2.line(anim_frame, (bx1, by1), (bx1, by1 + corner_len), (139, 92, 246), 3)
+            # Top-right
+            cv2.line(anim_frame, (bx2, by1), (bx2 - corner_len, by1), (139, 92, 246), 3)
+            cv2.line(anim_frame, (bx2, by1), (bx2, by1 + corner_len), (139, 92, 246), 3)
+            # Bottom-left
+            cv2.line(anim_frame, (bx1, by2), (bx1 + corner_len, by2), (139, 92, 246), 3)
+            cv2.line(anim_frame, (bx1, by2), (bx1, by2 - corner_len), (139, 92, 246), 3)
+            # Bottom-right
+            cv2.line(anim_frame, (bx2, by2), (bx2 - corner_len, by2), (139, 92, 246), 3)
+            cv2.line(anim_frame, (bx2, by2), (bx2, by2 - corner_len), (139, 92, 246), 3)
+
+            # Draw glowing target bounding outline
+            cv2.rectangle(anim_frame, (bx1 + 5, by1 + 5), (bx2 - 5, by2 - 5), (139, 92, 246), 1)
+            
+            # Draw telemetry text on top-left of HUD
+            cv2.putText(anim_frame, "ENGINE STATS: ACTIVE", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (161, 161, 170), 1, cv2.LINE_AA)
+            cv2.putText(anim_frame, "OCR MODEL: EASYOCR ENG", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (161, 161, 170), 1, cv2.LINE_AA)
+            cv2.putText(anim_frame, f"RESOLUTION: {w}x{h}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (161, 161, 170), 1, cv2.LINE_AA)
+
             # Scanning dots
             dots = "." * ((frame_index % 4) + 1)
             text = f"ANALYZING MEDICINE LABEL{dots.ljust(4)}"
-            cv2.putText(anim_frame, text, (center_x - 170, center_y + 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+            
+            # Text container card
+            cv2.rectangle(anim_frame, (center_x - 180, center_y - 20), (center_x + 180, center_y + 25), (24, 24, 27), -1)
+            cv2.rectangle(anim_frame, (center_x - 180, center_y - 20), (center_x + 180, center_y + 25), (139, 92, 246), 1)
+            
+            cv2.putText(anim_frame, text, (center_x - 150, center_y + 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.60, (250, 250, 250), 2, cv2.LINE_AA)
             
             # Scanning laser line
-            laser_y = int((center_y - 40) + 80 * (abs((frame_index % 24) - 12) / 12.0))
-            cv2.line(anim_frame, (center_x - 200, laser_y), (center_x + 200, laser_y), (0, 215, 255), 2)
-            cv2.circle(anim_frame, (center_x - 200, laser_y), 4, (0, 215, 255), -1)
-            cv2.circle(anim_frame, (center_x + 200, laser_y), 4, (0, 215, 255), -1)
+            laser_y = int((by1 + 10) + (box_h - 20) * (abs((frame_index % 24) - 12) / 12.0))
+            cv2.line(anim_frame, (bx1 + 10, laser_y), (bx2 - 10, laser_y), (16, 185, 129), 2) # Emerald laser line
+            cv2.circle(anim_frame, (bx1 + 10, laser_y), 3, (16, 185, 129), -1)
+            cv2.circle(anim_frame, (bx2 - 10, laser_y), 3, (16, 185, 129), -1)
             
             # Update canvas view
             rgb_anim = cv2.cvtColor(anim_frame, cv2.COLOR_BGR2RGB)
@@ -544,7 +819,7 @@ class MainAppController:
                     speech = self.synthesize_narration(med)
                     self.audio.speak_message(speech, interrupt=True)
                     
-                elif status == "INITIATE_ONLINE_FALLBACK":
+                elif status == "INITIATE_ONLINE_FALLBACK" or status == "LOW_CONFIDENCE_FALLBACK":
                     # Visual UI Re-Skin: pulses Amber Alert (#FFB703)
                     self.gui.update_status("LOCAL LOOKUP INCOMPLETE ❌ -> QUERYING LIVE WEB DATA...", "#FFB703")
                     
@@ -591,34 +866,60 @@ class MainAppController:
             self.audio.speak_message("No captured text available for search.", interrupt=True)
             return
 
-        logger.info(f"Triggered online fallback search for: '{self.last_ocr_text}'")
+        detected_type = self.ai.last_det_type
+        logger.info(f"Triggered online fallback search for: '{self.last_ocr_text}' with physical shape: '{detected_type}'")
 
         def online_search_worker():
             try:
+                # Intelligently construct query string to avoid generic shape conflicts
+                query_str = self.last_ocr_text
+                qs_lower = query_str.lower()
+                if detected_type:
+                    dt_lower = detected_type.lower()
+                    if any(x in dt_lower for x in ["bottle", "syrup", "suspension", "liquid"]):
+                        if not any(x in qs_lower for x in ["syrup", "suspension", "liquid", "sol"]):
+                            query_str += " syrup"
+                    elif any(x in dt_lower for x in ["cream", "ointment", "gel", "tube"]):
+                        if not any(x in qs_lower for x in ["cream", "ointment", "gel", "tube"]):
+                            query_str += " cream"
+
                 # Execute BeautifulSoup scraper
-                profile = self.scraper.scrape_medicine_profile(self.last_ocr_text)
+                profile = self.scraper.scrape_medicine_profile(query_str)
                 
                 # Double-check online lookup result (must not be empty or generic)
                 if profile and profile.get("name") and profile.get("name") != "Generic":
-                    # Cache on the fly! Dynamic database synchronization using insert_scraped_medicine
-                    self.db.insert_scraped_medicine(
-                        drug_name=profile['name'],
-                        manufacturer=profile['manufacturer'],
-                        strength=profile['strength'],
-                        form=profile['dosage_form'],
-                        indication=profile['indication'],
-                        side_effects=profile['classification'],
-                        price="N/A"
-                    )
+                    # Check if this medicine already exists in the local database
+                    existing_match_tuple = self.db.fuzzy_match_medicine(profile['name'])
+                    if existing_match_tuple and existing_match_tuple[1] >= 0.90:
+                        existing_match = existing_match_tuple[0]
+                        logger.info(f"Scraped drug '{profile['name']}' already exists in SQLite cache (matched '{existing_match['name']}'). Loading from local database.")
+                        self.root.after(0, lambda: self.gui.display_matched_results(existing_match, 1.0, data_source="LOCAL"))
+                        self.root.after(0, self.gui.hide_online_search_button)
+                        self.root.after(0, lambda: self.gui.update_status("LOCAL CACHE RETRIEVED SUCCESSFULLY", self.gui.success_color))
+                        
+                        # Synthesize narration using local data
+                        speech = self.synthesize_narration(existing_match)
+                        self.audio.speak_message(speech, interrupt=True)
+                    else:
+                        # Cache on the fly! Dynamic database synchronization using insert_scraped_medicine
+                        self.db.insert_scraped_medicine(
+                            drug_name=profile['name'],
+                            manufacturer=profile['manufacturer'],
+                            strength=profile['strength'],
+                            form=profile['dosage_form'],
+                            indication=profile['indication'],
+                            side_effects=profile['classification'],
+                            price="N/A"
+                        )
 
-                    # Format matched results back to the GUI beautifully
-                    self.root.after(0, lambda: self.gui.display_matched_results(profile, 1.0, data_source="ONLINE"))
-                    self.root.after(0, self.gui.hide_online_search_button)
-                    self.root.after(0, lambda: self.gui.update_status("ONLINE CACHE SYNC SUCCESSFUL", "#9D4EDD"))
+                        # Format matched results back to the GUI beautifully
+                        self.root.after(0, lambda: self.gui.display_matched_results(profile, 1.0, data_source="ONLINE"))
+                        self.root.after(0, self.gui.hide_online_search_button)
+                        self.root.after(0, lambda: self.gui.update_status("ONLINE CACHE SYNC SUCCESSFUL", "#9D4EDD"))
 
-                    # Spoken audio narrative from the default local SAPI5 sound card using clean professional English synthesis
-                    speech = self.synthesize_narration(profile)
-                    self.audio.speak_message(speech, interrupt=True)
+                        # Spoken audio narrative from the default local SAPI5 sound card using clean professional English synthesis
+                        speech = self.synthesize_narration(profile)
+                        self.audio.speak_message(speech, interrupt=True)
                 else:
                     raise CriticalMisreadException("Web lookup resolved no authentic matching drug profile.")
 

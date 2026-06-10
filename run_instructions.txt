@@ -1,0 +1,67 @@
+========================================================================
+             AI-Powered Medicine Assistant System Setup & Run Instructions
+========================================================================
+
+Follow the steps below to setup and run this project on any other PC or laptop.
+
+------------------------------------------------------------------------
+Prerequisites
+------------------------------------------------------------------------
+1. Python Installed:
+   Ensure Python 3.9, 3.10, or 3.11 is installed on the target machine.
+   * Make sure to check the box "Add Python to PATH" during installation.
+   * Download link: https://www.python.org/downloads/
+
+2. Internet Connection (First Run Only):
+   An internet connection is required for the first run so that the AI engines
+   (EasyOCR) can download their offline language recognition models. 
+   Subsequent runs can be performed completely 100% offline.
+
+------------------------------------------------------------------------
+Step-by-Step Installation Commands
+------------------------------------------------------------------------
+Open your terminal (Command Prompt, PowerShell, or terminal on macOS/Linux) 
+in this project folder and run:
+
+1. Create a Python Virtual Environment (Recommended to keep dependencies clean):
+   python -m venv venv
+
+2. Activate the Virtual Environment:
+   * Windows (Command Prompt):
+     venv\Scripts\activate
+   * Windows (PowerShell):
+     venv\Scripts\Activate.ps1
+   * macOS / Linux:
+     source venv/bin/activate
+
+3. Install All Required Dependencies:
+   pip install --upgrade pip
+   pip install -r requirements.txt
+
+4. Run the Main Application:
+   python main.py
+
+5. Run the System Diagnostics and Tests (Optional, to verify everything works):
+   python test_runner.py
+
+------------------------------------------------------------------------
+One-Click Shortcut (Windows Only)
+------------------------------------------------------------------------
+If you are on Windows, we have provided a "run_app.bat" file in the project folder.
+You can simply double-click "run_app.bat" to automatically perform the setup,
+install dependencies, and launch the application.
+
+------------------------------------------------------------------------
+Hardware Auto-Configuration Details
+------------------------------------------------------------------------
+When you run "main.py" on any laptop or PC, the system automatically performs a 
+Pre-Flight Hardware Check:
+- Integrated/USB Webcam: It scans for local webcam feeds. If found, it streams 
+  from your camera. If no webcam is connected, it automatically switches to a 
+  Virtual Simulator Mode (drawing a simulated medicine bottle) so the app 
+  remains testable.
+- Audio Drivers: It runs diagnostics on SAPI5 (Windows Text-to-Speech). If 
+  working, audio output is spoken directly through the laptop speakers. If 
+  unsupported or missing, it redirects audio routing to TCP socket port 8085 
+  for network integration.
+========================================================================

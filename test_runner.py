@@ -252,6 +252,43 @@ class OfflineMedicineTestRunner:
             all_passed = False
 
         # -------------------------------------------------------------
+        # TEST 8: Safety-Critical Generic Text/Warning Rejection Check
+        # -------------------------------------------------------------
+        try:
+            print("\n[ RUN  ] Test 8: Safety-Critical Generic Text/Warning Rejection Check...")
+            
+            warning_text = "WARNING: KEEP OUT OF REACH OF CHILDREN. STORE BELOW 30C."
+            noise_text = "lapyop keyboard camera"
+            
+            # Local query checks
+            med_local = self.db.search_medicine(warning_text)
+            med_local_noise = self.db.search_medicine(noise_text)
+            
+            # Online scraper checks (should raise an exception or fail validation rather than matching a mock profile)
+            online_failed = False
+            scraped = None
+            try:
+                scraped = scraper.scrape_medicine_profile(warning_text)
+            except Exception as e:
+                online_failed = True
+
+            online_noise_failed = False
+            scraped_noise = None
+            try:
+                scraped_noise = scraper.scrape_medicine_profile(noise_text)
+            except Exception as e:
+                online_noise_failed = True
+                
+            if med_local is None and med_local_noise is None and online_failed and online_noise_failed:
+                print("[ PASS ] Generic warning instructions & random noise successfully rejected by both local and online modules.")
+            else:
+                print(f"[ FAIL ] Safety check failed! Warning text matched locally: {med_local} or online: {scraped if not online_failed else 'Exception Raised'}. Noise matched locally: {med_local_noise} or online: {scraped_noise if not online_noise_failed else 'Exception Raised'}")
+                all_passed = False
+        except Exception as e:
+            print(f"[ FAIL ] Safety-critical generic text rejection test crashed: {e}")
+            all_passed = False
+
+        # -------------------------------------------------------------
         # CLEANUP & FINAL RESULTS REPORT
         # -------------------------------------------------------------
         print("\n" + "="*70)
@@ -259,7 +296,7 @@ class OfflineMedicineTestRunner:
         print("="*70)
         
         if all_passed:
-            print("\n[ SUCCESS ] All 7 system logic modules passed test suite successfully!")
+            print("\n[ SUCCESS ] All 8 system logic modules passed test suite successfully!")
         else:
             print("\n[ FAILURE ] One or more test modules reported errors. Review logs above.")
             

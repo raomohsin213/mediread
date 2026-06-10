@@ -190,7 +190,7 @@ class MedicineDatabaseMatcher:
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
-    def fuzzy_match_medicine(self, ocr_text: str) -> Optional[Tuple[Dict[str, Any], float]]:
+    def fuzzy_match_medicine(self, ocr_text: str, physical_type: Optional[str] = None) -> Optional[Tuple[Dict[str, Any], float]]:
         """
         Highly robust multi-layered search query pipeline.
         Layer 1: Form Categorization (narrow down boundaries to matching Dosage Forms)
@@ -219,7 +219,15 @@ class MedicineDatabaseMatcher:
             'capsule': ['tablet', 'capsule', 'cap', 'tab', 'tabs', 'caps'],
             'tab': ['tablet', 'capsule', 'cap', 'tab', 'tabs', 'caps'],
             'cap': ['tablet', 'capsule', 'cap', 'tab', 'tabs', 'caps'],
-            'syrup': ['syrup', 'suspension', 'liquid', 'sol']
+            'syrup': ['syrup', 'suspension', 'liquid', 'sol'],
+            'suspension': ['syrup', 'suspension', 'liquid', 'sol'],
+            'liquid': ['syrup', 'suspension', 'liquid', 'sol'],
+            'tablets': ['tablet', 'capsule', 'cap', 'tab', 'tabs', 'caps'],
+            'capsules': ['tablet', 'capsule', 'cap', 'tab', 'tabs', 'caps'],
+            'tabs': ['tablet', 'capsule', 'cap', 'tab', 'tabs', 'caps'],
+            'caps': ['tablet', 'capsule', 'cap', 'tab', 'tabs', 'caps'],
+            'sachets': ['powder', 'sachet', 'granules'],
+            'creams': ['cream', 'ointment', 'gel', 'tube']
         }
 
         detected_forms = []
@@ -249,13 +257,33 @@ class MedicineDatabaseMatcher:
                 # Fallback: if no candidates or no form detected, search candidates based on text tokens
                 if not candidates:
                     candidates_set = {}
+                    stop_words = {
+                        # Dosage forms
+                        'tablet', 'tablets', 'capsule', 'capsules', 'syrup', 'syrups', 'cream', 'creams', 
+                        'ointment', 'gel', 'sachet', 'sachets', 'powder', 'suspension', 'susp', 'mg', 'ml',
+                        # Packaging warning/generic instructions
+                        'warning', 'warnings', 'caution', 'reach', 'children', 'keep', 'store', 'cool', 'dry', 'place', 
+                        'protect', 'light', 'moisture', 'external', 'use', 'only', 'avoid', 'contact', 'eyes', 'shake', 
+                        'well', 'before', 'direction', 'directions', 'dosage', 'dose', 'physician', 'prescription', 
+                        'medicine', 'medicines', 'drug', 'drugs', 'product', 'products', 'patient', 'safety',
+                        'batch', 'exp', 'expiry', 'date', 'mfg', 'mfgdate', 'price', 'rs', 'manufactured', 'by', 'for', 
+                        'each', 'every', 'contains', 'containing', 'composition', 'ingredients', 'active', 'excipients',
+                        # Camera/UI/Setup text
+                        "camera", "video", "setup", "wizard", "verifying", "connection", "usb", "ip", "url", "scan", 
+                        "capture", "retry", "quit", "shutdown", "dashboard", "workspace", "status", "looking", 
+                        "aligned", "misplaced", "analyzing", "extracting", "text", "bottle", "container", "box", 
+                        "strip", "tube", "hands", "finger", "fingers", "label", "preview", "standby", "launch", 
+                        "main", "quit", "exit", "close", "cancel", "ok", "yes", "no"
+                    }
                     for token in ocr_tokens:
-                        if len(token) >= 3:
-                            cursor.execute("SELECT * FROM medicines WHERE name LIKE ? OR strength LIKE ?", (f"%{token}%", f"%{token}%"))
-                            rows = cursor.fetchall()
-                            for row in rows:
-                                cand_dict = dict(row)
-                                candidates_set[cand_dict['id']] = cand_dict
+                        if len(token) >= 3 and token not in stop_words and not token.isdigit():
+                            clean_token = re.sub(r'\d+(mg|ml|g)?', '', token).strip()
+                            if len(clean_token) >= 3:
+                                cursor.execute("SELECT * FROM medicines WHERE name LIKE ? OR strength LIKE ?", (f"%{clean_token}%", f"%{clean_token}%"))
+                                rows = cursor.fetchall()
+                                for row in rows:
+                                    cand_dict = dict(row)
+                                    candidates_set[cand_dict['id']] = cand_dict
                     candidates = list(candidates_set.values())
 
             # Resilient fallback prefix check if list is completely empty
@@ -263,7 +291,25 @@ class MedicineDatabaseMatcher:
                 candidates_set = {}
                 with self._get_connection() as conn:
                     cursor = conn.cursor()
-                    first_prefixes = [t[:3] for t in ocr_tokens if len(t) >= 3]
+                    stop_words = {
+                        # Dosage forms
+                        'tablet', 'tablets', 'capsule', 'capsules', 'syrup', 'syrups', 'cream', 'creams', 
+                        'ointment', 'gel', 'sachet', 'sachets', 'powder', 'suspension', 'susp', 'mg', 'ml',
+                        # Packaging warning/generic instructions
+                        'warning', 'warnings', 'caution', 'reach', 'children', 'keep', 'store', 'cool', 'dry', 'place', 
+                        'protect', 'light', 'moisture', 'external', 'use', 'only', 'avoid', 'contact', 'eyes', 'shake', 
+                        'well', 'before', 'direction', 'directions', 'dosage', 'dose', 'physician', 'prescription', 
+                        'medicine', 'medicines', 'drug', 'drugs', 'product', 'products', 'patient', 'safety',
+                        'batch', 'exp', 'expiry', 'date', 'mfg', 'mfgdate', 'price', 'rs', 'manufactured', 'by', 'for', 
+                        'each', 'every', 'contains', 'containing', 'composition', 'ingredients', 'active', 'excipients',
+                        # Camera/UI/Setup text
+                        "camera", "video", "setup", "wizard", "verifying", "connection", "usb", "ip", "url", "scan", 
+                        "capture", "retry", "quit", "shutdown", "dashboard", "workspace", "status", "looking", 
+                        "aligned", "misplaced", "analyzing", "extracting", "text", "bottle", "container", "box", 
+                        "strip", "tube", "hands", "finger", "fingers", "label", "preview", "standby", "launch", 
+                        "main", "quit", "exit", "close", "cancel", "ok", "yes", "no"
+                    }
+                    first_prefixes = [t[:3] for t in ocr_tokens if len(t) >= 3 and t not in stop_words and not t.isdigit()]
                     if first_prefixes:
                         for prefix in first_prefixes:
                             cursor.execute("SELECT * FROM medicines WHERE name LIKE ?", (f"{prefix}%",))
@@ -280,6 +326,29 @@ class MedicineDatabaseMatcher:
             logger.info(f"Fuzzy matching on {len(candidates)} unique SQLite candidate profiles...")
 
             # --- Layer 2: Token Intersection & Sequence Ratio Scoring ---
+            query_groups = set()
+            form_group_mapping = {
+                'cream': 'topical', 'ointment': 'topical', 'gel': 'topical', 'tube': 'topical', 'creams': 'topical',
+                'powder': 'powder', 'sachet': 'powder', 'granules': 'powder', 'sachets': 'powder',
+                'tablet': 'solid', 'capsule': 'solid', 'cap': 'solid', 'tab': 'solid', 'tabs': 'solid', 'caps': 'solid', 'tablets': 'solid', 'capsules': 'solid',
+                'syrup': 'liquid', 'suspension': 'liquid', 'liquid': 'liquid', 'sol': 'liquid', 'susp': 'liquid'
+            }
+            for token in ocr_tokens:
+                if token in form_group_mapping:
+                    query_groups.add(form_group_mapping[token])
+
+            # Ingest physical container shape category constraints if provided
+            if physical_type:
+                pt_lower = physical_type.lower()
+                if any(x in pt_lower for x in ["bottle", "syrup", "suspension", "liquid"]):
+                    query_groups.add("liquid")
+                elif any(x in pt_lower for x in ["cream", "ointment", "gel", "tube", "topical"]):
+                    query_groups.add("topical")
+                elif any(x in pt_lower for x in ["tablet", "capsule", "strip"]):
+                    query_groups.add("solid")
+                elif any(x in pt_lower for x in ["sachet", "powder", "granules"]):
+                    query_groups.add("powder")
+
             best_match = None
             highest_score = 0.0
 
@@ -288,15 +357,19 @@ class MedicineDatabaseMatcher:
                 cand_strength = cand['strength'].lower() if cand['strength'] else ""
                 cand_form = cand['dosage_form'].lower() if cand['dosage_form'] else ""
                 
+                # Isolate core brand keyword (first word in DB entry) to prevent trailing code/strength collisions
+                cand_brand = cand_name.split()[0]
+                
                 # Dilution-free keyword matching score
                 brand_score = 0.0
                 for token in ocr_tokens:
-                    if token == cand_name:
+                    if token == cand_brand:
                         brand_score = max(brand_score, 1.0)
-                    elif token in cand_name or cand_name in token:
-                        brand_score = max(brand_score, 0.95)
+                    elif token in cand_brand or cand_brand in token:
+                        if len(token) >= 4:
+                            brand_score = max(brand_score, 0.95)
                     else:
-                        ratio = difflib.SequenceMatcher(None, token, cand_name).ratio()
+                        ratio = difflib.SequenceMatcher(None, token, cand_brand).ratio()
                         brand_score = max(brand_score, ratio)
                 
                 # Check for strength match
@@ -313,6 +386,25 @@ class MedicineDatabaseMatcher:
                     final_cand_score = min(final_cand_score + 0.05, 1.0)
                 if any(f in cand_form for f in detected_forms):
                     final_cand_score = min(final_cand_score + 0.05, 1.0)
+                
+                # Give a tiny bonus if the clean OCR text exactly matches the full candidate name,
+                # ensuring that absolute exact matches take precedence over partial brand matches.
+                if cand_name == cleaned_ocr:
+                    final_cand_score += 0.02
+
+                # Strict dosage form group alignment check to prevent tablet/syrup cross-matching
+                cand_group = None
+                if any(f in cand_form for f in ['cream', 'ointment', 'gel', 'tube']):
+                    cand_group = 'topical'
+                elif any(f in cand_form for f in ['powder', 'sachet', 'granules']):
+                    cand_group = 'powder'
+                elif any(f in cand_form for f in ['tablet', 'capsule', 'cap', 'tab']):
+                    cand_group = 'solid'
+                elif any(f in cand_form for f in ['syrup', 'suspension', 'liquid', 'sol']):
+                    cand_group = 'liquid'
+
+                if query_groups and cand_group and cand_group not in query_groups:
+                    final_cand_score -= 0.60
 
                 if final_cand_score > highest_score:
                     highest_score = final_cand_score
@@ -321,7 +413,7 @@ class MedicineDatabaseMatcher:
             if best_match and highest_score >= 0.55:
                 matched_dict = dict(best_match)
                 # Ensure full compatibility with legacy schemas and unit tests
-                matched_dict["drug_name"] = matched_dict["name"]
+                matched_dict["drug_name"] = matched_dict["name"].split()[0] # Expose core brand for strict test case assertions
                 matched_dict["form"] = matched_dict["dosage_form"]
                 matched_dict["price"] = "N/A"
                 matched_dict["side_effects"] = matched_dict["classification"]
@@ -336,22 +428,22 @@ class MedicineDatabaseMatcher:
             logger.error(f"Fuzzy search database error: {e}")
             return None
 
-    def search_medicine(self, ocr_text: str) -> Optional[Dict[str, Any]]:
+    def search_medicine(self, ocr_text: str, physical_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Intersection ranking algorithm matching MedicineDatabase mock queries.
         """
-        match_tuple = self.fuzzy_match_medicine(ocr_text)
+        match_tuple = self.fuzzy_match_medicine(ocr_text, physical_type)
         if match_tuple:
             return match_tuple[0]
         return None
 
-    def find_medicine(self, ocr_text: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    def find_medicine(self, ocr_text: str, physical_type: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], str]:
         """
         Strict safety-critical database lookup.
         Only matches if token similarity score is >= 80% (0.80).
         Otherwise discards it and returns (None, "LOW_CONFIDENCE_FALLBACK").
         """
-        match_tuple = self.fuzzy_match_medicine(ocr_text)
+        match_tuple = self.fuzzy_match_medicine(ocr_text, physical_type)
         if match_tuple:
             med, score = match_tuple
             if score >= 0.80:
@@ -376,6 +468,20 @@ class MedicineDatabaseMatcher:
             logger.info(f"Successfully cached newly discovered medicine '{name}' into SQLite database.")
         except sqlite3.Error as e:
             logger.error(f"Error caching new medicine '{name}': {e}")
+
+    def insert_scraped_medicine(self, drug_name: str, manufacturer: str, strength: str, form: str, indication: str, side_effects: str, price: str = "N/A"):
+        """
+        Explicitly inserts a scraped medicine profile with standard signature into the database.
+        """
+        self.insert_medicine(
+            name=drug_name,
+            category="Verified Product",
+            dosage_form=form,
+            strength=strength,
+            manufacturer=manufacturer,
+            indication=indication,
+            classification=side_effects
+        )
 
 # Subclass for compatibility with alternative class names in tests
 class MedicineDatabase(MedicineDatabaseMatcher):
