@@ -198,17 +198,25 @@ class VisionProcessor:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             return frame, "no_bottle", None, "Searching for medicine. Please place it in front of the camera."
 
-        # Extract container box coordinates
+        # Extract container box coordinates with safety margin to prevent edge text clipping
         x1, y1, x2, y2 = bbox
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(w_frame, x2), min(h_frame, y2)
         
-        cropped_bottle = frame[y1:y2, x1:x2]
         w_box = x2 - x1
         h_box = y2 - y1
 
         if w_box <= 0 or h_box <= 0:
             return frame, "no_bottle", None, ""
+
+        # 15% padding for cleaner OCR extraction without edge cutoff
+        pad_w = int(w_box * 0.15)
+        pad_h = int(h_box * 0.15)
+        crop_x1 = max(0, x1 - pad_w)
+        crop_y1 = max(0, y1 - pad_h)
+        crop_x2 = min(w_frame, x2 + pad_w)
+        crop_y2 = min(h_frame, y2 + pad_h)
+        cropped_bottle = frame[crop_y1:crop_y2, crop_x1:crop_x2]
 
         # Classify shape dynamically based on aspect ratio if classical contours were used
         aspect_ratio = w_box / h_box if h_box > 0 else 1.0

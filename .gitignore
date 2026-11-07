@@ -36,3 +36,9 @@ ENV/
 *.njsproj
 *.sln
 *.swp
+*.tmp
+
+# Dynamic audio synthesis runtime cache
+audio_cache/**/dyn_*
+audio_cache/**/test_*
+audio_cache/**/panadol_demo.wav

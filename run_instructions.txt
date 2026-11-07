@@ -1,5 +1,6 @@
 ========================================================================
              AI-Powered Medicine Assistant System Setup & Run Instructions
+             (Bilingual Support: Urdu Default with English Toggle)
 ========================================================================
 
 Follow the steps below to setup and run this project on any other PC or laptop.
@@ -23,7 +24,7 @@ Step-by-Step Installation Commands
 Open your terminal (Command Prompt, PowerShell, or terminal on macOS/Linux) 
 in this project folder and run:
 
-1. Create a Python Virtual Environment (Recommended to keep dependencies clean):
+1. Create a Python Virtual Environment:
    python -m venv venv
 
 2. Activate the Virtual Environment:
@@ -43,6 +44,7 @@ in this project folder and run:
 
 5. Run the System Diagnostics and Tests (Optional, to verify everything works):
    python test_runner.py
+   python test_suite.py
 
 ------------------------------------------------------------------------
 One-Click Shortcut (Windows Only)
@@ -52,16 +54,30 @@ You can simply double-click "run_app.bat" to automatically perform the setup,
 install dependencies, and launch the application.
 
 ------------------------------------------------------------------------
-Hardware Auto-Configuration Details
+Language & Accessibility Features (Urdu & English)
 ------------------------------------------------------------------------
-When you run "main.py" on any laptop or PC, the system automatically performs a 
-Pre-Flight Hardware Check:
-- Integrated/USB Webcam: It scans for local webcam feeds. If found, it streams 
-  from your camera. If no webcam is connected, it automatically switches to a 
-  Virtual Simulator Mode (drawing a simulated medicine bottle) so the app 
-  remains testable.
-- Audio Drivers: It runs diagnostics on SAPI5 (Windows Text-to-Speech). If 
-  working, audio output is spoken directly through the laptop speakers. If 
-  unsupported or missing, it redirects audio routing to TCP socket port 8085 
-  for network integration.
+- Default Language: Urdu (اردو) is enabled by default across the entire application.
+- All UI buttons, labels, indications, and medical data cards display in Urdu.
+- Spoken Voice Guidance:
+  - Welcome instructions, camera setup, real-time spatial guidance ("دائیں", "بائیں", 
+    "سیدھا رکھیں", "دوا بلکل سیدھی ہے"), drug indications, dosage instructions, and 
+    precautions are spoken in natural Pakistani Urdu.
+- Instant Language Toggle:
+  - Click the "🌐 English / اردو" toggle button on screen OR press the "T" key on your
+    keyboard at any time to switch dynamically between Urdu and English.
+  - The UI and spoken voice immediately switch to your chosen language.
+
+------------------------------------------------------------------------
+Keyboard Shortcuts Summary
+------------------------------------------------------------------------
+- [T]       : Toggle language between Urdu and English (زبان تبدیل کریں)
+- [SPACE / C]: Capture bottle label for OCR reading (دوا کا لیبل اسکین کریں)
+- [R]       : Retry / Return to live camera feed (دوبارہ کوشش کریں)
+- [I]       : Internet fallback search (آن لائن انٹرنیٹ تلاش)
+- [U]       : Select Local USB Webcam (لوکل ویب کیم)
+- [W]       : Select Wireless IP Camera (وائرلیس آئی پی کیمرا)
+- [V]       : Verify camera connection (کیمرا چیک کریں)
+- [L]       : Launch dashboard from setup wizard (ڈیش بورڈ شروع کریں)
+- [Q]       : Shutdown system workspace (سسٹم بند کریں)
+
 ========================================================================

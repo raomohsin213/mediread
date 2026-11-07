@@ -193,8 +193,27 @@ class OCREngine:
             sweeps.append((cleaned_text_4, score_4, "270° CW", rotated_270_img))
 
             # --- LAZY ENHANCEMENT PASSES ---
+            def rank_sweep(item):
+                # item: (text, score, orient, img)
+                score = item[1]
+                txt = item[0].strip().lower()
+                words = [w for w in txt.split() if len(w) >= 3 and not w.isdigit()]
+                
+                # Check for medical keywords (cream, ointment, gel, tube, syrup, tablet, mg, g, etc.)
+                has_med = any(kw in txt for kw in [
+                    'cream', 'ointment', 'gel', 'tube', 'syrup', 'suspension',
+                    'tablet', 'capsule', 'drop', 'drops', 'sachet', 'mg', 'ml', 'g', 'mcg', 'forte', 'plus'
+                ])
+                med_score = 1.0 if has_med else 0.0
+
+                # If database match score is >= 0.55, it takes priority
+                if score >= 0.55:
+                    return (2.0 + score, len(words), len(txt))
+                # Otherwise, rank by readable words and medical indicators so text at 90/270 degrees is selected
+                return (med_score, len(words), len(txt))
+
             # Sort standard sweeps to find the most promising orientation
-            sweeps.sort(key=lambda x: x[1], reverse=True)
+            sweeps.sort(key=rank_sweep, reverse=True)
             best_std_text, best_std_score, best_std_orient, best_std_img = sweeps[0]
             
             logger.info(f"Standard passes finished. Best standard: {best_std_orient} with score {best_std_score:.2f}. Running lazy enhancements...")
@@ -228,7 +247,7 @@ class OCREngine:
             sweeps.append((cleaned_bin, score_bin, f"{best_std_orient} Binarized", binarized_img))
 
             # Find the absolute best of all sweeps (including standard and enhanced)
-            best_sweep = max(sweeps, key=lambda x: x[1])
+            best_sweep = max(sweeps, key=rank_sweep)
             logger.info(f"Multi-angle sweeps & enhancements complete. Best match resolved at {best_sweep[2]} with similarity score: {best_sweep[1]:.2f}")
             return best_sweep[0]
 

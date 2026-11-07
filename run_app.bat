@@ -18,7 +18,7 @@ if %errorlevel% neq 0 (
 
 :: Create virtual environment if it does not exist
 if not exist "venv" (
-    echo [INFO] Creating Python virtual environment (venv)...
+    echo [INFO] Creating Python virtual environment...
     python -m venv venv
     if %errorlevel% neq 0 (
         echo [ERROR] Failed to create virtual environment.
@@ -29,24 +29,14 @@ if not exist "venv" (
 
 :: Activate the virtual environment
 echo [INFO] Activating virtual environment...
-call venv\Scripts\activate
+call venv\Scripts\activate.bat
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to activate virtual environment.
     pause
     exit /b
 )
 
-:: Install / Update dependencies
-echo [INFO] Checking and installing requirements...
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-if %errorlevel% neq 0 (
-    echo [ERROR] Failed to install requirements.
-    pause
-    exit /b
-)
-
-:: Run the application
+:: Run the application directly
 echo [INFO] Starting the AI Medicine Assistant...
 python main.py
 if %errorlevel% neq 0 (
@@ -57,4 +47,3 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [INFO] Shutdown complete.
-pause

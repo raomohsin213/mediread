@@ -456,16 +456,41 @@ class MedicineDatabaseMatcher:
     def insert_medicine(self, name: str, category: str, dosage_form: str, strength: str, manufacturer: str, indication: str, classification: str):
         """
         Dynamically inserts a new matched/scraped medicine directly into SQLite database (cache-on-the-fly).
+        Uses UPSERT logic to prevent duplicates and also appends to local CSV dataset for persistent backups.
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO medicines (name, category, dosage_form, strength, manufacturer, indication, classification)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (name, category, dosage_form, strength, manufacturer, indication, classification))
+                cursor.execute("SELECT id FROM medicines WHERE LOWER(name) = LOWER(?)", (name,))
+                existing = cursor.fetchone()
+                if existing:
+                    cursor.execute("""
+                        UPDATE medicines 
+                        SET category = ?, dosage_form = ?, strength = ?, manufacturer = ?, indication = ?, classification = ?
+                        WHERE id = ?
+                    """, (category, dosage_form, strength, manufacturer, indication, classification, existing['id']))
+                    logger.info(f"Updated existing medicine record '{name}' in SQLite database.")
+                else:
+                    cursor.execute("""
+                        INSERT INTO medicines (name, category, dosage_form, strength, manufacturer, indication, classification)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (name, category, dosage_form, strength, manufacturer, indication, classification))
+                    logger.info(f"Successfully cached newly discovered medicine '{name}' into SQLite database.")
                 conn.commit()
-            logger.info(f"Successfully cached newly discovered medicine '{name}' into SQLite database.")
+
+            # Append to CSV dataset so it persists across fresh SQLite rebuilds
+            csv_candidates = [self.csv_path, "medicine_dataset.csv", "Pakistan Medicines Dataset.csv"]
+            for cp in csv_candidates:
+                if cp and os.path.exists(cp):
+                    try:
+                        with open(cp, mode='a', newline='', encoding='utf-8') as f:
+                            writer = csv.writer(f)
+                            writer.writerow([name, manufacturer, strength, dosage_form, category, indication, classification, "N/A"])
+                        logger.info(f"Appended newly discovered medicine '{name}' to {cp} as permanent offline backup.")
+                        break
+                    except Exception as ce:
+                        logger.debug(f"Could not append to CSV file {cp}: {ce}")
+
         except sqlite3.Error as e:
             logger.error(f"Error caching new medicine '{name}': {e}")
 
