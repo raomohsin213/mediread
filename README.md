@@ -88,25 +88,30 @@ The system is split into five clean, decoupled modules adhering to standard comp
 
 ## 🛠️ Quickstart Installation Guide
 
-### Prerequisites
-Make sure Python 3.9+ is installed on your Windows development system.
+### Option 1: One-Click Automatic Setup (Recommended for Windows)
+Simply double-click **`run_app.bat`** in the project folder!
+- Automatically checks Python installation.
+- Automatically creates the virtual environment (`venv`).
+- Automatically installs all required libraries from `requirements.txt` on first launch.
+- Immediately starts the application with full Urdu/English voice capabilities.
+- On subsequent runs, it starts in 1-2 seconds with zero re-downloading.
 
-### 1. Install Dependencies
-Install all required libraries using the local requirements package:
+### Option 2: Manual Terminal Setup
 ```bash
+# 1. Create and activate virtual environment
+python -m venv venv
+venv\Scripts\activate.bat   # On Windows (or source venv/bin/activate on Linux/Mac)
+
+# 2. Install all required dependencies in one go
+pip install --upgrade pip
 pip install -r requirements.txt
-```
 
-### 2. Run the Main Application
-Launch the system orchestrator. If you don't have a webcam plugged in, don't worry! The application will automatically boot in **Simulation Mode** with a rotating virtual medicine bottle to test the AI controls:
-```bash
+# 3. Run the application
 python main.py
-```
 
-### 3. Run the Automated Tests
-Verify that all system operations, thread safety queues, SQLite query scoring, and CV algorithms function correctly:
-```bash
+# 4. (Optional) Run the automated verification test harness
 python test_runner.py
+python test_suite.py
 ```
 
 ---

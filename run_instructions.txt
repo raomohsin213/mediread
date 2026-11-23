@@ -3,75 +3,74 @@
              (Bilingual Support: Urdu Default with English Toggle)
 ========================================================================
 
-Follow the steps below to setup and run this project on any other PC or laptop.
+HOW TO RUN ON ANY NEW PC / LAPTOP (SUBMISSION GUIDE)
+------------------------------------------------------------------------
+
+METHOD 1: ONE-CLICK AUTO-SETUP & LAUNCH (RECOMMENDED)
+------------------------------------------------------------------------
+Just double-click "run_app.bat" in the project folder!
+- It automatically detects your Python installation.
+- It automatically creates the virtual environment ("venv").
+- It automatically downloads and installs all required libraries 
+  (OpenCV, YOLOv8, EasyOCR, Piper Neural TTS, Pygame, etc.).
+- It immediately launches the application!
+- On all future runs, it starts in 1-2 seconds with zero re-downloading.
 
 ------------------------------------------------------------------------
-Prerequisites
+METHOD 2: MANUAL COMMAND-LINE INSTALLATION (IF PREFERRED)
 ------------------------------------------------------------------------
-1. Python Installed:
-   Ensure Python 3.9, 3.10, or 3.11 is installed on the target machine.
-   * Make sure to check the box "Add Python to PATH" during installation.
-   * Download link: https://www.python.org/downloads/
-
-2. Internet Connection (First Run Only):
-   An internet connection is required for the first run so that the AI engines
-   (EasyOCR) can download their offline language recognition models. 
-   Subsequent runs can be performed completely 100% offline.
-
-------------------------------------------------------------------------
-Step-by-Step Installation Commands
-------------------------------------------------------------------------
-Open your terminal (Command Prompt, PowerShell, or terminal on macOS/Linux) 
-in this project folder and run:
+Open Command Prompt or PowerShell in this project folder:
 
 1. Create a Python Virtual Environment:
    python -m venv venv
 
 2. Activate the Virtual Environment:
    * Windows (Command Prompt):
-     venv\Scripts\activate
+     venv\Scripts\activate.bat
    * Windows (PowerShell):
      venv\Scripts\Activate.ps1
    * macOS / Linux:
      source venv/bin/activate
 
-3. Install All Required Dependencies:
+3. Install All Required Dependencies in One Go:
    pip install --upgrade pip
    pip install -r requirements.txt
 
 4. Run the Main Application:
    python main.py
 
-5. Run the System Diagnostics and Tests (Optional, to verify everything works):
+5. (Optional) Run the Full System Test Suite to Verify:
    python test_runner.py
    python test_suite.py
 
 ------------------------------------------------------------------------
-One-Click Shortcut (Windows Only)
+PREREQUISITES
 ------------------------------------------------------------------------
-If you are on Windows, we have provided a "run_app.bat" file in the project folder.
-You can simply double-click "run_app.bat" to automatically perform the setup,
-install dependencies, and launch the application.
+1. Python 3.9, 3.10, or 3.11 installed.
+   Download link: https://www.python.org/downloads/
+   * CRITICAL: Check the box "Add Python to PATH" during Python installation!
+
+2. Internet Connection (First Run Only):
+   Needed only on the very first run to download the pip packages from 
+   requirements.txt and EasyOCR text models.
+   Once downloaded, the entire system runs 100% OFFLINE!
 
 ------------------------------------------------------------------------
-Language & Accessibility Features (Urdu & English)
+LANGUAGE & ACCESSIBILITY FEATURES (URDU & ENGLISH)
 ------------------------------------------------------------------------
-- Default Language: Urdu (اردو) is enabled by default across the entire application.
-- All UI buttons, labels, indications, and medical data cards display in Urdu.
+- Default Language: Urdu (اردو) is enabled by default.
 - Spoken Voice Guidance:
-  - Welcome instructions, camera setup, real-time spatial guidance ("دائیں", "بائیں", 
-    "سیدھا رکھیں", "دوا بلکل سیدھی ہے"), drug indications, dosage instructions, and 
-    precautions are spoken in natural Pakistani Urdu.
+  Natural Pakistani Urdu voice powered by offline Piper Neural ONNX 
+  speech engine.
 - Instant Language Toggle:
-  - Click the "🌐 English / اردو" toggle button on screen OR press the "T" key on your
-    keyboard at any time to switch dynamically between Urdu and English.
-  - The UI and spoken voice immediately switch to your chosen language.
+  Press the "T" key or click the language button to toggle between 
+  Urdu and English anytime.
 
 ------------------------------------------------------------------------
-Keyboard Shortcuts Summary
+KEYBOARD SHORTCUTS
 ------------------------------------------------------------------------
 - [T]       : Toggle language between Urdu and English (زبان تبدیل کریں)
-- [SPACE / C]: Capture bottle label for OCR reading (دوا کا لیبل اسکین کریں)
+- [SPACE / C]: Capture bottle/medicine label (دوا کا لیبل اسکین کریں)
 - [R]       : Retry / Return to live camera feed (دوبارہ کوشش کریں)
 - [I]       : Internet fallback search (آن لائن انٹرنیٹ تلاش)
 - [U]       : Select Local USB Webcam (لوکل ویب کیم)
