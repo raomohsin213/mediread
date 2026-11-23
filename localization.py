@@ -614,6 +614,50 @@ BRAND_NAMES_URDU = {
     "tonoflex forte": "ٹونوفلیکس فورٹ",
     "tramadol": "ٹرا ماڈول",
 
+    # Comprehensive Pakistani Pharmacopeia Coverage
+    "cac-1000": "سی اے سی ایک ہزار",
+    "cac 1000": "سی اے سی ایک ہزار",
+    "evion": "ایویون",
+    "glucophage": "گلوکوفاج",
+    "ispaghol": "اسپغول",
+    "loprin": "لوپرن",
+    "lowplat": "لوپلیٹ",
+    "mucaine": "میوکین",
+    "ors": "او آر ایس",
+    "pyodine": "پائیوڈین",
+    "septran": "سیپٹران",
+    "septran ds": "سیپٹران ڈی ایس",
+    "skinoren": "اسکنورین",
+    "somogel": "سوموجیل",
+    "xanax": "زینیکس",
+    "zestril": "زیسٹریل",
+    "azomax": "ایزومیکس",
+    "bonjela": "بونجیلا",
+    "citra-alka": "سٹرا الکا",
+    "co-amoxiclav": "کو اموکسیکلاو",
+    "corex": "کوریکس",
+    "cranmax": "کرین میکس",
+    "cravit": "کراوٹ",
+    "dalacin-t": "ڈلاسن ٹی",
+    "dalacin t": "ڈلاسن ٹی",
+    "fesovit": "فیسووِٹ",
+    "lipiget": "لپی گیٹ",
+    "selsun": "سیلسن",
+    "selsun blue": "سیلسن بلیو",
+    "velo": "ویلو",
+    "betamethasone": "بیٹامیتھاسون",
+    "ketoprofen": "کیٹوپروفین",
+    "acetone": "ایسیٹون",
+    "ennerzo": "اینرزو",
+    "areth": "ایریتھ",
+    "dhn": "ڈی ایچ این",
+    "hlla": "ہلہ",
+    "ina": "آئینا",
+    "kiri": "کیری",
+    "tati": "ٹیٹی",
+    "wua": "ڈبلیو یو اے",
+    "ear": "ایئر ڈراپس",
+
     # Generic & Form descriptors
     "paracetamol": "پیراسیٹامول",
     "ibuprofen": "آئبوپروفین",
@@ -669,17 +713,64 @@ def translate_form_to_urdu(form: str) -> str:
             return ur
     return form
 
+def transliterate_latin_to_urdu(text: str) -> str:
+    """
+    Phonetic transliteration of remaining Latin/English words to Urdu script
+    so that Piper Urdu TTS never speaks raw English letters or foreign accents.
+    """
+    digraphs = [
+        ('ch', 'چ'), ('sh', 'ش'), ('kh', 'خ'), ('ph', 'ف'), ('th', 'تھ'),
+        ('gh', 'غ'), ('zh', 'ژ'), ('ee', 'ی'), ('oo', 'و'), ('ou', 'او')
+    ]
+    singles = {
+        'a': 'ا', 'b': 'ب', 'c': 'ک', 'd': 'ڈ', 'e': 'ے', 'f': 'ف',
+        'g': 'گ', 'h': 'ہ', 'i': 'ی', 'j': 'ج', 'k': 'ک', 'l': 'ل',
+        'm': 'م', 'n': 'ن', 'o': 'و', 'p': 'پ', 'q': 'ق', 'r': 'ر',
+        's': 'س', 't': 'ٹ', 'u': 'یو', 'v': 'و', 'w': 'و', 'x': 'ایکس',
+        'y': 'ی', 'z': 'ز'
+    }
+
+    def convert_word(m):
+        w = m.group(0).lower()
+        res = ''
+        i = 0
+        while i < len(w):
+            matched = False
+            for dg, ur in digraphs:
+                if w.startswith(dg, i):
+                    res += ur
+                    i += len(dg)
+                    matched = True
+                    break
+            if not matched:
+                c = w[i]
+                res += singles.get(c, c)
+                i += 1
+        return res
+
+    return re.sub(r'[a-zA-Z]+', convert_word, text)
+
 def translate_brand_to_urdu(name: str) -> str:
     """Translates medicine brand names and variants to fluent Urdu script."""
     if not name or name == "N/A":
         return "غیر معروف دوا"
     
-    result = name.strip()
+    # Clean internal serials (SR-xxxx) and trailing dosage noise for natural spoken delivery
+    cleaned = re.sub(r'\bSR-\d+\b', '', name, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\b\d+(\.\d+)?\s*(mg|ml|g|gm|mcg|iu|%|s)\b', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'[/,;:\(\)\[\]]', ' ', cleaned)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip('- ')
+    if not cleaned:
+        cleaned = name.strip()
+        
+    result = cleaned
     # Sort keys by length descending to match longest phrases first (e.g., surbex-z before surbex)
     for eng_brand, urdu_brand in sorted(BRAND_NAMES_URDU.items(), key=lambda x: len(x[0]), reverse=True):
         pattern = re.compile(rf'\b{re.escape(eng_brand)}\b', re.IGNORECASE)
         result = pattern.sub(urdu_brand, result)
         
+    # Phonetic fallback for any remaining English words
+    result = transliterate_latin_to_urdu(result)
     return result
 
 def translate_indication_to_urdu(indication: str, for_speech: bool = False) -> str:
